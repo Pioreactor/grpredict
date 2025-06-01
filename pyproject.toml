@@ -8,12 +8,29 @@ version = "25.6.1"
 description = "Estimate growth curves using an Extended Kalman Filter"
 readme = "README.md"
 requires-python = ">=3.8"
-license = { file = "LICENSE" }
+keywords = ["biology", "kalman filter", "growth rate", "optical density", "microbiology"]
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Cam Davidson-Pilon", email = "cam@pioreactor.com" }
 ]
 dependencies = [
     "numpy>=1.20"
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.6",
+  "Programming Language :: Python :: 3.7",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
 ]
 
 [project.urls]

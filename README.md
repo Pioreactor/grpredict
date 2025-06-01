@@ -31,7 +31,7 @@ There's a hint of an interesting idea in the last paragraph though: _"over small
 Our new formula might look like:
 
 
-$$\text{OD}(t) = \exp{\text{gr}_0 \delta t  + \text{gr}_1 \delta t + ...  }$$
+$$\text{OD}(t) = \exp{ \left( \text{gr}_0 \Delta t  + \text{gr}_1 \Delta t + ...  \right)}$$
 
 If we think more about this, and we keep shrinking our time interval towards zero, this is just an integral:
 
