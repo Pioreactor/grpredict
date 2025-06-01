@@ -7,9 +7,8 @@ of research: it is the basic method of microbiology.”
 Monitoring and controlling the specific growth rate
 should not constitute a specialized subject or branch
 of research: it should be the basic method of advanced
-microbial bioprocessing.
-
- - Jacques Monod
+microbial bioprocessing.  
+> \- Jacques Monod
 
 The first step to controlling a culture's growth is to measure it. To do this, we need to model the rate of growth. We've seen other attempts at modelling the growth rate, but they all assumed too much:
 
