@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grpredict"
+version = "25.6.1"
+description = "Estimate growth curves using an Extended Kalman Filter"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Cam Davidson-Pilon", email = "cam@pioreactor.com" }
+]
+dependencies = [
+    "numpy>=1.20"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "mypy"
+]
+
+
+[tool.setuptools.packages.find]
+where = ["src"]
