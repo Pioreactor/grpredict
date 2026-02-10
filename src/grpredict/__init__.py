@@ -1,7 +1,13 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
+from collections.abc import Sequence
 from math import sqrt
+from typing import Any
 from typing import Optional
+from typing import TypeAlias
+
+FloatVectorLike: TypeAlias = Any
+FloatMatrixLike: TypeAlias = Any
 
 class ExponentialMovingAverage:
     """
@@ -12,7 +18,7 @@ class ExponentialMovingAverage:
     Ex: if alpha = 0, use latest value only.
     """
 
-    def __init__(self, alpha: float):
+    def __init__(self, alpha: float) -> None:
         if alpha < 0 or alpha > 1:
             raise ValueError
         self.value: Optional[float] = None
@@ -51,7 +57,7 @@ class ExponentialMovingStd:
         ema_alpha: Optional[float] = None,
         initial_std_value: Optional[float] = None,
         initial_mean_value: Optional[float] = None,
-    ):
+    ) -> None:
         self._var_value = initial_std_value**2 if initial_std_value is not None else None
         self.value: Optional[float] = initial_std_value if initial_std_value is not None else None
         self.alpha = alpha
@@ -195,16 +201,19 @@ class CultureGrowthEKF:
 
     def __init__(
         self,
-        initial_state,
-        initial_covariance,
-        process_noise_covariance,
-        observation_noise_covariance,
-        angles: list[str],
+        initial_state: FloatVectorLike,
+        initial_covariance: FloatMatrixLike,
+        process_noise_covariance: FloatMatrixLike,
+        observation_noise_covariance: FloatMatrixLike,
+        angles: Sequence[str],
         outlier_std_threshold: float,
     ) -> None:
         import numpy as np
 
-        initial_state = np.asarray(initial_state)
+        initial_state = np.asarray(initial_state, dtype=float)
+        initial_covariance = np.asarray(initial_covariance, dtype=float)
+        process_noise_covariance = np.asarray(process_noise_covariance, dtype=float)
+        observation_noise_covariance = np.asarray(observation_noise_covariance, dtype=float)
 
         assert initial_state.shape[0] == 2
         assert (
@@ -228,10 +237,15 @@ class CultureGrowthEKF:
             0.975, 0.80, initial_std_value=np.sqrt(observation_noise_covariance[0][0])
         )
 
-    def update(self, obs: list[float], dt: float, recent_dilution=False):
+    def update(
+        self,
+        obs: FloatVectorLike,
+        dt: float,
+        recent_dilution: bool = False,
+    ) -> tuple[FloatVectorLike, FloatMatrixLike]:
         import numpy as np
 
-        observation = np.asarray(obs)
+        observation = np.asarray(obs, dtype=float)
         assert observation.shape[0] == self.n_sensors, (observation, self.n_sensors)
 
         # Predict
@@ -287,7 +301,6 @@ class CultureGrowthEKF:
 
         # update gr process covariance if required
         nis = (residual_state[0] ** 2) / residual_covariance[0, 0]
-
         if nis > _NIS_THRESHOLD:
             self.process_noise_covariance[1, 1] *= 2
         else:
@@ -300,13 +313,14 @@ class CultureGrowthEKF:
 
         return self.state_, self.covariance_
 
-    def update_observation_noise_cov(self, residual_state):
+    def update_observation_noise_cov(self, residual_state: FloatVectorLike) -> FloatMatrixLike:
         """
         Exponentially-weighted measurement noise covariance.
         """
         import numpy as np
 
         lambda_ = 0.97  # controls the “memory” of the estimator. 0.97 means the filter effectively averages the last ≈ 1 / (1-0.97) ≈ 33 timesteps.
+        residual_state = np.asarray(residual_state, dtype=float)
         rrT = np.outer(residual_state, residual_state)
 
         observation_noise_covariance = lambda_ * self.observation_noise_covariance + (1.0 - lambda_) * rrT
@@ -317,7 +331,7 @@ class CultureGrowthEKF:
 
         return observation_noise_covariance
 
-    def update_state_from_previous_state(self, state, dt: float):
+    def update_state_from_previous_state(self, state: FloatVectorLike, dt: float) -> FloatVectorLike:
         """
         Denoted "f" in literature, x_{k} = f(x_{k-1})
 
@@ -329,10 +343,10 @@ class CultureGrowthEKF:
         """
         import numpy as np
 
-        od, rate = state
+        od, rate = np.asarray(state, dtype=float)
         return np.array([od * np.exp(rate * dt), rate])
 
-    def _J_update_observations_from_state(self, state_prediction):
+    def _J_update_observations_from_state(self, state_prediction: FloatVectorLike) -> FloatMatrixLike:
         """
         Jacobian of observations model, encoded as update_observations_from_state
 
@@ -362,7 +376,17 @@ class CultureGrowthEKF:
             J[i, 0] = 1.0 if (angle != "180") else -exp(-(od - 1))
         return J
 
-    def update_covariance_from_old_covariance(self, state, covariance, dt: float, recent_dilution: bool):
+    def update_covariance_from_old_covariance(
+        self,
+        state: FloatVectorLike,
+        covariance: FloatMatrixLike,
+        dt: float,
+        recent_dilution: bool,
+    ) -> FloatMatrixLike:
+        import numpy as np
+
+        state = np.asarray(state, dtype=float)
+        covariance = np.asarray(covariance, dtype=float)
         Q = self.process_noise_covariance.copy().astype(float)
 
         if recent_dilution:
@@ -372,7 +396,7 @@ class CultureGrowthEKF:
         jacobian = self._J_update_state_from_previous_state(state, dt)
         return jacobian @ covariance @ jacobian.T + Q
 
-    def update_observations_from_state(self, state_predictions):
+    def update_observations_from_state(self, state_predictions: FloatVectorLike) -> FloatVectorLike:
         """
         "h" in the literature, z_k = h(x_k).
 
@@ -388,7 +412,7 @@ class CultureGrowthEKF:
             obs[i] = od if (angle != "180") else np.exp(-(od - 1))
         return obs
 
-    def _J_update_state_from_previous_state(self, state, dt: float):
+    def _J_update_state_from_previous_state(self, state: FloatVectorLike, dt: float) -> FloatMatrixLike:
         """
         The prediction process is (encoded in update_state_from_previous_state)
 
@@ -410,7 +434,7 @@ class CultureGrowthEKF:
 
         J = np.zeros((2, 2))
 
-        od, rate = state
+        od, rate = np.asarray(state, dtype=float)
         J[0, 0] = np.exp(rate * dt)
         J[1, 1] = 1
 
@@ -419,9 +443,10 @@ class CultureGrowthEKF:
         return J
 
     @staticmethod
-    def _is_positive_definite(A) -> bool:
+    def _is_positive_definite(A: FloatMatrixLike) -> bool:
         import numpy as np
 
+        A = np.asarray(A, dtype=float)
         if np.array_equal(A, A.T):
             try:
                 return True

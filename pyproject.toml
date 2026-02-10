@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "grpredict"
-version = "25.6.1"
+version = "26.2.10"
 description = "Estimate growth curves using an Extended Kalman Filter"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -43,6 +43,8 @@ dev = [
     "mypy"
 ]
 
+[tool.setuptools.package-data]
+grpredict = ["py.typed", "*.pyi"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
