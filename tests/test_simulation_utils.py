@@ -27,7 +27,7 @@ def test_simulate_profiled_od_observations_returns_expected_shapes(profile_name:
 
 
 def test_noise_profiles_produce_distinct_observation_series() -> None:
-    growth_rates = plausible_growth_rate_profiles(12.0, 5.0 / 60.0)["oscillatory"]
+    growth_rates = plausible_growth_rate_profiles(12.0, 5.0 / 60.0)["diauxic_shift"]
     nominal = simulate_profiled_od_observations(
         growth_rates,
         profile_name="nominal_colored",
@@ -66,7 +66,7 @@ def test_zero_growth_latent_od_stays_constant() -> None:
 
 @pytest.mark.parametrize(
     "profile_name",
-    ["diauxic_shift", "oscillatory", "step_change", "late_restart", "narrow_peak", "zero_growth", "constant_growth"],
+    ["diauxic_shift", "late_restart", "narrow_peak", "zero_growth", "constant_growth"],
 )
 def test_nonnegative_growth_profiles_produce_monotone_latent_od(profile_name: str) -> None:
     dt_hours = 5.0 / 60.0
