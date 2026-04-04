@@ -125,6 +125,85 @@ def simulate_constant_growth_with_regular_dosing(
     }
 
 
+def simulate_zero_growth_with_level_shift(
+    total_hours: float,
+    dt_hours: float,
+    profile_name: str,
+    *,
+    seed: int,
+    initial_od: float = 1.0,
+    level_shift_after_hours: float = 3.0,
+    level_shift_fraction: float = 0.10,
+) -> dict[str, np.ndarray]:
+    growth_rates = plausible_growth_rate_profiles(total_hours, dt_hours)["zero_growth"]
+    latent_od = np.full(growth_rates.size + 1, initial_od, dtype=float)
+    level_shift_step = int(round(level_shift_after_hours / dt_hours))
+    latent_od[level_shift_step:] *= 1.0 + level_shift_fraction
+
+    observed_od = simulate_noisy_observations_from_latent_od(
+        latent_od,
+        profile_name=profile_name,
+        rng=np.random.default_rng(seed),
+    )
+    return {
+        "growth_rates": growth_rates,
+        "latent_od": latent_od,
+        "observed_od": observed_od,
+        "level_shift_step": level_shift_step,
+    }
+
+
+def simulate_constant_growth_with_noise_profile_change(
+    total_hours: float,
+    dt_hours: float,
+    *,
+    seed: int,
+    initial_od: float = 1.0,
+    switch_after_hours: float = 4.0,
+    low_noise_profile_name: str = "nominal_near_iid",
+    high_noise_profile_name: str = "noisy_colored",
+) -> dict[str, np.ndarray]:
+    growth_rates = plausible_growth_rate_profiles(total_hours, dt_hours)["constant_growth"]
+    latent_od = np.empty(growth_rates.size + 1, dtype=float)
+    latent_od[0] = initial_od
+
+    for step_index, rate in enumerate(growth_rates, start=1):
+        latent_od[step_index] = latent_od[step_index - 1] * math.exp(float(rate) * dt_hours)
+
+    switch_step = int(round(switch_after_hours / dt_hours))
+    generator = np.random.default_rng(seed)
+
+    observed_before_switch = simulate_noisy_observations_from_latent_od(
+        latent_od[:switch_step],
+        profile_name=low_noise_profile_name,
+        rng=generator,
+    )
+    observed_after_switch = simulate_noisy_observations_from_latent_od(
+        latent_od[switch_step - 1 :],
+        profile_name=high_noise_profile_name,
+        rng=generator,
+    )
+    observed_od = np.concatenate(
+        [observed_before_switch, observed_after_switch[1:]],
+        dtype=float,
+    )
+
+    outlier_steps = np.array([switch_step + 18, switch_step + 75], dtype=int)
+    outlier_offsets = np.array([0.22, -0.18], dtype=float)
+    valid_mask = outlier_steps < observed_od.size
+    observed_od[outlier_steps[valid_mask]] = np.maximum(
+        observed_od[outlier_steps[valid_mask]] + outlier_offsets[valid_mask],
+        0.0,
+    )
+
+    return {
+        "growth_rates": growth_rates,
+        "latent_od": latent_od,
+        "observed_od": observed_od,
+        "switch_step": switch_step,
+    }
+
+
 def root_mean_square_error(estimated: np.ndarray, actual: np.ndarray) -> float:
     return math.sqrt(float(np.mean((estimated - actual) ** 2)))
 
@@ -241,13 +320,6 @@ def test_ekf_handles_regular_dosing_without_losing_constant_growth_estimate(
         profile_name,
         simulated["recent_dilution_flags"],
     )
-    from matplotlib import pyplot as plt
-    #print(simulated["observed_od"][:100])
-    #print(estimated_od[:100])
-    plt.plot(simulated["observed_od"])
-    plt.plot(estimated_rates)
-    plt.plot(estimated_od)
-    plt.show()
 
     assert np.all(np.isfinite(estimated_od))
     assert np.all(np.isfinite(estimated_rates))
@@ -265,6 +337,66 @@ def test_ekf_handles_regular_dosing_without_losing_constant_growth_estimate(
 
     non_dosing_rates = estimated_rates[~simulated["recent_dilution_flags"]]
     assert abs(float(np.median(non_dosing_rates[-24:])) - 0.25) < 0.06
+
+
+@pytest.mark.parametrize("profile_name", ["nominal_colored", "nominal_near_iid", "noisy_colored"])
+@pytest.mark.parametrize("seed", [7, 19, 83])
+def test_ekf_zero_growth_level_shift_causes_transient_rate_jump_then_converges(
+    profile_name: str,
+    seed: int,
+) -> None:
+    dt_hours = 5.0 / 60.0 / 60.0
+    simulated = simulate_zero_growth_with_level_shift(
+        total_hours=8.0,
+        dt_hours=dt_hours,
+        profile_name=profile_name,
+        seed=seed,
+        level_shift_fraction=0.03
+    )
+
+    estimated_rates = run_ekf_over_observations(
+        simulated["observed_od"],
+        dt_hours,
+        profile_name,
+    )
+
+    level_shift_index = simulated["level_shift_step"] - 1
+    transient_window = estimated_rates[level_shift_index : level_shift_index + 120]
+    settled_window = estimated_rates[-240:]
+
+    assert np.all(np.isfinite(estimated_rates))
+    assert transient_window.size >= 60
+    assert settled_window.size >= 120
+    assert float(np.max(np.abs(transient_window))) > 0.02
+    assert abs(float(np.median(settled_window))) < 0.015
+
+
+@pytest.mark.parametrize("seed", [7, 19, 83])
+def test_ekf_constant_growth_adapts_after_noise_profile_change(seed: int) -> None:
+    dt_hours = 5.0 / 60.0 / 60.0
+    simulated = simulate_constant_growth_with_noise_profile_change(
+        total_hours=9.0,
+        dt_hours=dt_hours,
+        seed=seed,
+    )
+
+    estimated_rates = run_ekf_over_observations(
+        simulated["observed_od"],
+        dt_hours,
+        "noisy_colored",
+    )
+
+    switch_index = simulated["switch_step"] - 1
+    pre_switch_window = estimated_rates[max(switch_index - 240, 0) : switch_index]
+    settled_post_switch_window = estimated_rates[switch_index + 180 : switch_index + 540]
+
+    assert np.all(np.isfinite(estimated_rates))
+    assert pre_switch_window.size >= 120
+    assert settled_post_switch_window.size >= 180
+    assert abs(float(np.median(pre_switch_window)) - 0.25) < 0.05
+    assert abs(float(np.median(settled_post_switch_window)) - 0.25) < 0.08
+    assert float(np.std(settled_post_switch_window)) < 0.08
+    assert float(np.max(np.abs(settled_post_switch_window))) < 0.5
 
 
 def test_ekf_mean_per_scenario_rmse_stays_below_target_across_explicit_profiles() -> None:
