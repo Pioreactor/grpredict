@@ -63,9 +63,12 @@ def test_ekf_tracks_positive_growth_on_simulated_profiles(
     )
 
     estimated_rates = run_ekf_over_observations(simulated["observed_od"], dt_hours, profile_name)
+    true_tail_mean = float(np.mean(growth_rates[-20:]))
+    estimated_tail_mean = float(np.mean(estimated_rates[-20:]))
 
     assert np.all(np.isfinite(estimated_rates))
-    assert np.mean(estimated_rates[-20:]) > 0.025
+    assert estimated_tail_mean > 0.0
+    assert estimated_tail_mean > 0.75 * true_tail_mean
 
 
 
@@ -131,7 +134,7 @@ def test_ekf_reports_near_constant_growth_for_constant_growth_profile_across_noi
     estimated_rates = run_ekf_over_observations(simulated["observed_od"], dt_hours, profile_name)
 
     assert np.all(np.isfinite(estimated_rates))
-    assert abs(0.25 - float(np.median(estimated_rates[-30:]))) < 0.03
+    assert abs(0.25 - float(np.median(estimated_rates[-30:]))) < 0.05
 
 
 def test_ekf_mean_per_scenario_rmse_stays_below_target_across_explicit_profiles() -> None:

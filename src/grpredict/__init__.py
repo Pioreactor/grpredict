@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 from collections.abc import Sequence
-from math import exp
 from math import log
 from math import sqrt
 from typing import Any
@@ -252,16 +251,12 @@ class CultureGrowthEKF:
             3.0 * float(np.mean(np.diag(self.observation_noise_covariance)))
             / max(float(self.state_[0]) ** 2, self._minimum_state_value),
         )
-        self._log_observation_noise_variance = self._base_log_observation_noise_variance
-        self._rate_blend_weight = 0.35
+        self._rate_blend_weight = 1.0
         self._last_public_state_ = self.state_.copy()
         self._last_public_covariance_ = self.covariance_.copy()
 
     def _safe_log(self, value: float) -> float:
         return log(max(float(value), self._minimum_state_value))
-
-    def _safe_exp(self, value: float) -> float:
-        return max(exp(float(value)), self._minimum_state_value)
 
     def _public_covariance_to_hidden_covariance(
         self,
@@ -281,32 +276,6 @@ class CultureGrowthEKF:
         hidden_covariance[1, 0] = hidden_covariance[0, 1]
         hidden_covariance[2, 2] = max(hidden_covariance[1, 1], 1e-4)
         return hidden_covariance
-
-    def _hidden_covariance_to_public_covariance(
-        self,
-        hidden_state: FloatVectorLike,
-        hidden_covariance: FloatMatrixLike,
-    ) -> FloatMatrixLike:
-        import numpy as np
-
-        hidden_state = np.asarray(hidden_state, dtype=float)
-        hidden_covariance = np.asarray(hidden_covariance, dtype=float)
-        od = self._safe_exp(hidden_state[0])
-        jacobian = np.array([[od, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=float)
-        public_covariance = jacobian @ hidden_covariance @ jacobian.T
-        public_covariance[0, 0] = max(float(public_covariance[0, 0]), 1e-12)
-        public_covariance[1, 1] = max(float(public_covariance[1, 1]), 1e-12)
-        return public_covariance
-
-    def _project_hidden_state_to_public_attributes(self) -> None:
-        import numpy as np
-
-        self.state_ = np.array(
-            [self._safe_exp(self._log_state_[0]), float(self._log_state_[1])], dtype=float
-        )
-        self.covariance_ = self._hidden_covariance_to_public_covariance(
-            self._log_state_, self._log_covariance_
-        )
 
     def _sync_hidden_state_if_public_attributes_changed(self) -> None:
         import numpy as np
@@ -334,27 +303,6 @@ class CultureGrowthEKF:
             ],
             dtype=float,
         )
-
-    def _hidden_process_noise_covariance(
-        self,
-        public_state: FloatVectorLike,
-        recent_dilution: bool,
-    ) -> FloatMatrixLike:
-        import numpy as np
-
-        od = max(float(np.asarray(public_state, dtype=float)[0]), self._minimum_state_value)
-        q_log = max(
-            1e-8,
-            0.01 * float(self.process_noise_covariance[0, 0]) / max(od * od, self._minimum_state_value),
-        )
-        q_rate = max(1e-8, 0.1 * float(self.process_noise_covariance[1, 1]))
-        q_acc = max(1e-5, 100.0 * q_rate)
-
-        process_covariance = np.diag([q_log, q_rate, q_acc]).astype(float)
-        if recent_dilution:
-            process_covariance[0, 0] += 0.05
-            process_covariance[1, 1] += 1e-4
-        return process_covariance
 
     def _od_measurement_and_variance_from_sensor(
         self, measurement: float, sensor_index: int
@@ -393,27 +341,6 @@ class CultureGrowthEKF:
         combined_variance = 1.0 / float(np.sum(weights))
         combined_measurement = float(np.sum(weights * log_measurements) * combined_variance)
         return combined_measurement, combined_variance
-
-    def _update_public_observation_noise_covariance_from_log_variance(self) -> None:
-        import numpy as np
-
-        od = max(float(self.state_[0]), self._minimum_state_value)
-        updated_observation_noise = self.observation_noise_covariance.copy().astype(float)
-        for sensor_index, angle in enumerate(self.angles):
-            if angle == "180":
-                transmission = exp(-(od - 1.0))
-                derivative = 1.0 / max(od * transmission, self._minimum_state_value)
-                updated_observation_noise[sensor_index, sensor_index] = (
-                    self._log_observation_noise_variance / (derivative * derivative)
-                )
-            else:
-                updated_observation_noise[sensor_index, sensor_index] = (
-                    self._log_observation_noise_variance * od * od
-                )
-        self.observation_noise_covariance = updated_observation_noise
-
-    def _apply_sustained_growth_rate_correction(self) -> None:
-        return
 
     def update(
         self,
