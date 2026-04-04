@@ -15,7 +15,6 @@ def make_ekf(dt: float) -> CultureGrowthEKF:
       - 2×2 initial covariance = identity
       - small process-noise covariance (to keep it nearly deterministic)
       - small observation-noise covariance (one sensor)
-      - a single “identity” angle (so h(x) = [OD])
       - a large outlier threshold (to disable outlier handling)
     """
     initial_state = np.array([1.0, 0.0])  # OD = 1.0, r = 0.0 (we’ll overwrite r later)
@@ -25,7 +24,6 @@ def make_ekf(dt: float) -> CultureGrowthEKF:
                                          [0.0, 1e-8]])
     # Very small observation noise (one sensor)
     observation_noise_covariance = np.array([[1e-6]])
-    angles = ["0"]  # “0” means use identity (h(x) = OD)
     outlier_std_threshold = 1e6  # effectively disable outlier checks
 
     ekf = CultureGrowthEKF(
@@ -33,7 +31,6 @@ def make_ekf(dt: float) -> CultureGrowthEKF:
         initial_covariance=initial_covariance,
         process_noise_covariance=process_noise_covariance,
         observation_noise_covariance=observation_noise_covariance,
-        angles=angles,
         outlier_std_threshold=outlier_std_threshold,
     )
     return ekf
