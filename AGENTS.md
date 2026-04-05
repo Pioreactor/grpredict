@@ -10,11 +10,9 @@ This is a small Python package with a `src/` layout:
 Keep new code close to existing modules unless there is a clear boundary that justifies a new file.
 
 ## Build, Test, and Development Commands
-Use the local virtual environment (`.venv`) when available.
+Use the local virtual environment (`.venv`) when available. Use `python3.14`.
 
 ```bash
-source .venv/bin/activate
-pip install -e ".[dev]"      # editable install + pytest/black/mypy
 pytest -v                      # full test suite (matches CI)
 pytest tests/test_ekf.py -q    # run one file during iteration
 python -m mypy src             # type-check package code

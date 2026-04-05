@@ -7,6 +7,11 @@ import pytest
 
 # Replace `your_module` with the actual module/path where CultureGrowthEKF is defined.
 from grpredict import CultureGrowthEKF
+from grpredict import build_filter_from_observation_summary
+from grpredict import estimate_normalization_factor_from_warmup_observations
+from grpredict import normalize_observation_by_factor
+from grpredict import normalize_observations_by_factor
+from grpredict import summarize_warmup_observations
 
 
 def make_ekf(dt: float) -> CultureGrowthEKF:
@@ -147,3 +152,78 @@ def test_linearly_increasing_growth_rate():
 
     # Also check absolute value near the true rate at the last timestep
     assert pytest.approx(true_rates[-1], rel=0.1) == estimated_rates[-1]
+
+
+def test_warmup_normalization_recenters_startup_window_near_one() -> None:
+    raw_observations = np.array([2.45, 2.48, 2.43, 2.50, 2.47, 2.60, 2.71], dtype=float)
+    warmup_observations = raw_observations[:5]
+
+    normalization_factor = estimate_normalization_factor_from_warmup_observations(
+        warmup_observations,
+    )
+    normalized = normalize_observations_by_factor(raw_observations, normalization_factor)
+
+    assert normalization_factor > 0.0
+    assert pytest.approx(1.0, rel=0.02) == float(np.median(normalized[:5]))
+
+
+def test_summarize_warmup_observations_handles_gain_scaled_au_data() -> None:
+    dt_hours = 5.0 / 60.0 / 60.0
+    latent_signal = np.array([1.00, 1.00, 1.01, 1.02, 1.02, 1.03, 1.05, 1.07], dtype=float)
+    raw_observations = 0.42 + 2.7 * latent_signal
+    scaled_observations = 3.0 * raw_observations
+    warmup_observations = raw_observations[:5]
+    scaled_warmup_observations = scaled_observations[:5]
+
+    summary = summarize_warmup_observations(warmup_observations, dt_hours)
+    summary_scaled = summarize_warmup_observations(
+        scaled_warmup_observations,
+        dt_hours,
+    )
+
+    assert pytest.approx(3.0, rel=1e-3) == (
+        summary_scaled["normalization_factor"] / summary["normalization_factor"]
+    )
+    np.testing.assert_allclose(
+        normalize_observations_by_factor(raw_observations, summary["normalization_factor"]),
+        normalize_observations_by_factor(scaled_observations, summary_scaled["normalization_factor"]),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+
+    ekf = build_filter_from_observation_summary(summary)
+    normalized_observations = normalize_observations_by_factor(
+        raw_observations,
+        summary["normalization_factor"],
+    )
+    state, covariance = ekf.update([float(normalized_observations[5])], dt_hours)
+    assert np.all(np.isfinite(state))
+    assert np.all(np.isfinite(covariance))
+
+
+def test_summarize_warmup_observations_returns_warmup_only_normalized_data() -> None:
+    dt_hours = 5.0 / 60.0 / 60.0
+    raw_observations = np.array([2.45, 2.48, 2.43, 2.50, 2.47, 2.60, 2.71], dtype=float)
+    warmup_observations = raw_observations[:5]
+
+    summary = summarize_warmup_observations(warmup_observations, dt_hours)
+
+    normalized_warmup = np.asarray(summary["normalized_warmup_observations"], dtype=float)
+    assert normalized_warmup.shape == warmup_observations.shape
+    assert pytest.approx(1.0, rel=0.02) == float(np.median(normalized_warmup))
+
+
+def test_normalize_observation_by_factor_matches_batch_helper() -> None:
+    raw_observations = np.array([2.45, 2.48, 2.43, 2.50, 2.47], dtype=float)
+    normalization_factor = 2.47
+
+    normalized_batch = normalize_observations_by_factor(raw_observations, normalization_factor)
+    normalized_streaming = np.asarray(
+        [
+            normalize_observation_by_factor(float(observation), normalization_factor)
+            for observation in raw_observations
+        ],
+        dtype=float,
+    )
+
+    np.testing.assert_allclose(normalized_batch, normalized_streaming, rtol=1e-12, atol=1e-12)

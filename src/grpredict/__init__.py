@@ -8,6 +8,204 @@ from typing import TypeAlias
 FloatVectorLike: TypeAlias = Any
 FloatMatrixLike: TypeAlias = Any
 
+
+def _as_positive_1d_array(values: FloatVectorLike, *, minimum_value: float) -> FloatVectorLike:
+    import numpy as np
+
+    array = np.asarray(values, dtype=float)
+    if array.ndim != 1:
+        raise ValueError("Expected a one-dimensional sequence of observations")
+    if array.size == 0:
+        raise ValueError("Expected at least one observation")
+    return np.maximum(array, minimum_value)
+
+
+def _is_positive_definite(A: FloatMatrixLike) -> bool:
+    import numpy as np
+
+    A = np.asarray(A, dtype=float)
+    if np.array_equal(A, A.T):
+        try:
+            np.linalg.cholesky(A)
+            return True
+        except np.linalg.LinAlgError:
+            return False
+    else:
+        return False
+
+
+def _robust_std(values: FloatVectorLike) -> float:
+    import numpy as np
+
+    array = np.asarray(values, dtype=float)
+    if array.size == 0:
+        return 0.0
+    median = float(np.median(array))
+    mad = float(np.median(np.abs(array - median)))
+    return 1.4826 * mad
+
+
+def estimate_normalization_factor_from_warmup_observations(
+    observations: FloatVectorLike,
+    *,
+    minimum_value: float = 1e-9,
+) -> float:
+    import numpy as np
+
+    positive_observations = _as_positive_1d_array(observations, minimum_value=minimum_value)
+    if positive_observations.size < 2:
+        raise ValueError("Need at least two warmup observations")
+    log_reference = float(np.median(np.log(positive_observations)))
+    return float(np.exp(log_reference))
+
+
+def normalize_observation_by_factor(
+    observation: float,
+    normalization_factor: float,
+    *,
+    minimum_value: float = 1e-9,
+) -> float:
+    return max(float(observation), minimum_value) / float(normalization_factor)
+
+
+def normalize_observations_by_factor(
+    observations: FloatVectorLike,
+    normalization_factor: float,
+    *,
+    minimum_value: float = 1e-9,
+) -> FloatVectorLike:
+    import numpy as np
+
+    if normalization_factor <= 0:
+        raise ValueError("normalization_factor must be positive")
+    positive_observations = _as_positive_1d_array(observations, minimum_value=minimum_value)
+    return np.maximum(positive_observations / float(normalization_factor), minimum_value)
+
+
+def estimate_observation_noise_covariance_from_warmup_observations(
+    normalized_observations: FloatVectorLike,
+    dt_hours: float,
+    *,
+    minimum_value: float = 1e-9,
+) -> FloatMatrixLike:
+    import numpy as np
+
+    if dt_hours <= 0:
+        raise ValueError("dt_hours must be positive")
+
+    positive_observations = _as_positive_1d_array(
+        normalized_observations,
+        minimum_value=minimum_value,
+    )
+    if positive_observations.size < 2:
+        raise ValueError("Need at least two warmup observations")
+
+    time_hours = np.arange(positive_observations.size, dtype=float) * float(dt_hours)
+    log_warmup = np.log(positive_observations)
+    design = np.column_stack([np.ones(positive_observations.size, dtype=float), time_hours])
+    coefficients, _, _, _ = np.linalg.lstsq(design, log_warmup, rcond=None)
+    fitted_log_signal = design @ coefficients
+    log_residuals = log_warmup - fitted_log_signal
+    log_residual_std = max(_robust_std(log_residuals), 1e-3)
+    return np.array([[log_residual_std * log_residual_std]], dtype=float)
+
+
+def estimate_initial_covariance_from_warmup_observations(
+    normalized_observations: FloatVectorLike,
+    dt_hours: float,
+    *,
+    minimum_value: float = 1e-9,
+) -> FloatMatrixLike:
+    import numpy as np
+
+    if dt_hours <= 0:
+        raise ValueError("dt_hours must be positive")
+
+    positive_observations = _as_positive_1d_array(
+        normalized_observations,
+        minimum_value=minimum_value,
+    )
+    if positive_observations.size < 2:
+        raise ValueError("Need at least two warmup observations")
+
+    log_warmup = np.log(positive_observations)
+    sigma_od0 = max(2.0 * _robust_std(positive_observations), 0.05)
+
+    if positive_observations.size < 3:
+        sigma_gr0 = 0.15
+    else:
+        startup_growth_samples = np.diff(log_warmup) / float(dt_hours)
+        sigma_gr0 = max(2.0 * _robust_std(startup_growth_samples), 0.15)
+
+    return np.diag([sigma_od0 * sigma_od0, sigma_gr0 * sigma_gr0]).astype(float)
+
+
+def make_process_noise_covariance(
+    dt_hours: float,
+    *,
+    reference_dt_hours: float = 5.0 / 60.0 / 60.0,
+) -> FloatMatrixLike:
+    import numpy as np
+
+    if dt_hours <= 0:
+        raise ValueError("dt_hours must be positive")
+    scale = max(float(dt_hours) / float(reference_dt_hours), 0.25)
+    return np.diag([1e-5 * scale, 1e-6 * scale]).astype(float)
+
+
+def summarize_warmup_observations(
+    observations: FloatVectorLike,
+    dt_hours: float,
+    *,
+    minimum_value: float = 1e-9,
+) -> dict[str, object]:
+    import numpy as np
+
+    normalization_factor = estimate_normalization_factor_from_warmup_observations(
+        observations,
+        minimum_value=minimum_value,
+    )
+    normalized_observations = normalize_observations_by_factor(
+        observations,
+        normalization_factor,
+        minimum_value=minimum_value,
+    )
+    initial_state = np.array([1.0, 0.0], dtype=float)
+    initial_covariance = estimate_initial_covariance_from_warmup_observations(
+        normalized_observations,
+        dt_hours,
+        minimum_value=minimum_value,
+    )
+    process_noise_covariance = make_process_noise_covariance(dt_hours)
+    observation_noise_covariance = estimate_observation_noise_covariance_from_warmup_observations(
+        normalized_observations,
+        dt_hours,
+        minimum_value=minimum_value,
+    )
+    return {
+        "normalization_factor": normalization_factor,
+        "normalized_warmup_observations": normalized_observations,
+        "initial_state": initial_state,
+        "initial_covariance": initial_covariance,
+        "process_noise_covariance": process_noise_covariance,
+        "observation_noise_covariance": observation_noise_covariance,
+    }
+
+
+def build_filter_from_observation_summary(
+    summary: dict[str, object],
+    *,
+    outlier_std_threshold: float = 5.0,
+) -> "CultureGrowthEKF":
+    return CultureGrowthEKF(
+        initial_state=summary["initial_state"],
+        initial_covariance=summary["initial_covariance"],
+        process_noise_covariance=summary["process_noise_covariance"],
+        observation_noise_covariance=summary["observation_noise_covariance"],
+        outlier_std_threshold=outlier_std_threshold,
+    )
+
+
 class CultureGrowthEKF:
     """
     Single-filter growth-rate estimator in log-OD space.
@@ -37,14 +235,25 @@ class CultureGrowthEKF:
         process_noise_covariance = np.asarray(process_noise_covariance, dtype=float)
         observation_noise_covariance = np.asarray(observation_noise_covariance, dtype=float)
 
-        assert initial_state.shape[0] == 2
-        assert (
-            initial_state.shape[0] == initial_covariance.shape[0] == initial_covariance.shape[1]
-        ), f"Shapes are not correct,{initial_state.shape[0]=}, {initial_covariance.shape[0]=}, {initial_covariance.shape[1]=}"
-        assert process_noise_covariance.shape == initial_covariance.shape
-        assert self._is_positive_definite(process_noise_covariance)
-        assert self._is_positive_definite(initial_covariance)
-        assert self._is_positive_definite(observation_noise_covariance)
+        if initial_state.shape[0] != 2:
+            raise ValueError("initial_state must have shape (2,)")
+        if (
+            initial_state.shape[0] != initial_covariance.shape[0]
+            or initial_covariance.shape[0] != initial_covariance.shape[1]
+        ):
+            raise ValueError(
+                "initial_covariance must be square and match the size of initial_state"
+            )
+        if process_noise_covariance.shape != initial_covariance.shape:
+            raise ValueError(
+                "process_noise_covariance must have the same shape as initial_covariance"
+            )
+        if not _is_positive_definite(process_noise_covariance):
+            raise ValueError("process_noise_covariance must be positive definite")
+        if not _is_positive_definite(initial_covariance):
+            raise ValueError("initial_covariance must be positive definite")
+        if not _is_positive_definite(observation_noise_covariance):
+            raise ValueError("observation_noise_covariance must be positive definite")
 
         self.process_noise_covariance = process_noise_covariance
         self.observation_noise_covariance = observation_noise_covariance
@@ -139,7 +348,7 @@ class CultureGrowthEKF:
     ) -> FloatMatrixLike:
         import numpy as np
 
-        process_covariance = np.diag([1e-8, 1e-7, 1e-5]).astype(float)
+        process_covariance = np.diag([1e-8, 6e-8, 6e-6]).astype(float)
         if recent_dilution:
             process_covariance[0, 0] += 0.05
             process_covariance[1, 1] += 1e-4
@@ -210,7 +419,10 @@ class CultureGrowthEKF:
         self._sync_hidden_state_if_public_attributes_changed()
 
         observation = np.asarray(obs, dtype=float)
-        assert observation.shape[0] == self.n_sensors, (observation, self.n_sensors)
+        if observation.shape[0] != self.n_sensors:
+            raise ValueError(
+                f"obs must contain one value per sensor: got {observation.shape[0]}, expected {self.n_sensors}"
+            )
 
         combined_log_measurement, measurement_variance = self._combine_log_measurements(observation)
         transition = self._hidden_transition_matrix(dt)
@@ -273,17 +485,3 @@ class CultureGrowthEKF:
         self._last_public_state_ = self.state_.copy()
         self._last_public_covariance_ = self.covariance_.copy()
         return self.state_, self.covariance_
-
-    @staticmethod
-    def _is_positive_definite(A: FloatMatrixLike) -> bool:
-        import numpy as np
-
-        A = np.asarray(A, dtype=float)
-        if np.array_equal(A, A.T):
-            try:
-                np.linalg.cholesky(A)
-                return True
-            except np.linalg.LinAlgError:
-                return False
-        else:
-            return False
