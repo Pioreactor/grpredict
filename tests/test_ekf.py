@@ -12,6 +12,8 @@ from grpredict import estimate_normalization_factor_from_warmup_observations
 from grpredict import normalize_observation_by_factor
 from grpredict import normalize_observations_by_factor
 from grpredict import summarize_warmup_observations
+from tests.simulation_utils import plausible_growth_rate_profiles
+from tests.simulation_utils import simulate_profiled_od_observations
 
 
 def make_ekf(dt: float) -> CultureGrowthEKF:
@@ -227,3 +229,78 @@ def test_normalize_observation_by_factor_matches_batch_helper() -> None:
     )
 
     np.testing.assert_allclose(normalized_batch, normalized_streaming, rtol=1e-12, atol=1e-12)
+
+
+def test_growth_rate_is_clipped_at_initialization() -> None:
+    ekf = CultureGrowthEKF(
+        initial_state=np.array([1.0, 5.0]),
+        initial_covariance=np.eye(2),
+        process_noise_covariance=np.diag([1e-6, 1e-8]),
+        observation_noise_covariance=np.array([[1e-6]]),
+        outlier_std_threshold=5.0,
+    )
+
+    assert ekf.state_[1] == 3.0
+
+
+def test_growth_rate_is_clipped_when_syncing_and_updating() -> None:
+    dt = 1.0
+    ekf = make_ekf(dt)
+    ekf.state_ = np.array([1.0, 10.0])
+    ekf.covariance_ = np.eye(2)
+
+    state, _ = ekf.update([1.0], dt)
+
+    assert -1.0 <= float(state[1]) <= 3.0
+
+
+def test_growth_rate_process_noise_variance_does_not_affect_race_filter_outputs() -> None:
+    dt_hours = 5.0 / 60.0 / 60.0
+    growth_rates = plausible_growth_rate_profiles(6.0, dt_hours)["constant_growth"]
+    simulated = simulate_profiled_od_observations(
+        growth_rates,
+        profile_name="noisy_colored",
+        dt_hours=dt_hours,
+        seed=123,
+    )
+
+    low_process_noise_ekf = CultureGrowthEKF(
+        initial_state=np.array([1.0, 0.0], dtype=float),
+        initial_covariance=np.diag([0.10**2, 0.15**2]),
+        process_noise_covariance=np.diag([1e-5, 1e-12]),
+        observation_noise_covariance=np.array([[0.003**2]], dtype=float),
+        outlier_std_threshold=5.0,
+    )
+    high_process_noise_ekf = CultureGrowthEKF(
+        initial_state=np.array([1.0, 0.0], dtype=float),
+        initial_covariance=np.diag([0.10**2, 0.15**2]),
+        process_noise_covariance=np.diag([1e-5, 1e2]),
+        observation_noise_covariance=np.array([[0.003**2]], dtype=float),
+        outlier_std_threshold=5.0,
+    )
+
+    low_states: list[np.ndarray] = []
+    high_states: list[np.ndarray] = []
+    low_covariances: list[np.ndarray] = []
+    high_covariances: list[np.ndarray] = []
+
+    for observation in simulated["observed_od"][1:]:
+        low_state, low_covariance = low_process_noise_ekf.update([float(observation)], dt_hours)
+        high_state, high_covariance = high_process_noise_ekf.update([float(observation)], dt_hours)
+        low_states.append(np.asarray(low_state, dtype=float).copy())
+        high_states.append(np.asarray(high_state, dtype=float).copy())
+        low_covariances.append(np.asarray(low_covariance, dtype=float).copy())
+        high_covariances.append(np.asarray(high_covariance, dtype=float).copy())
+
+    np.testing.assert_allclose(
+        np.asarray(low_states, dtype=float),
+        np.asarray(high_states, dtype=float),
+        rtol=0.0,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        np.asarray(low_covariances, dtype=float),
+        np.asarray(high_covariances, dtype=float),
+        rtol=0.0,
+        atol=0.0,
+    )

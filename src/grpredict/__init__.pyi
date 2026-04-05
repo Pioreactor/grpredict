@@ -49,6 +49,8 @@ def build_filter_from_observation_summary(
     summary: dict[str, object],
     *,
     outlier_std_threshold: float = 5.0,
+    min_growth_rate: float = -1.0,
+    max_growth_rate: float = 3.0,
 ) -> "CultureGrowthEKF": ...
 
 
@@ -61,6 +63,8 @@ class CultureGrowthEKF:
     n_sensors: int
     n_states: int
     outlier_std_threshold: float
+    min_growth_rate: float
+    max_growth_rate: float
 
     def __init__(
         self,
@@ -69,6 +73,8 @@ class CultureGrowthEKF:
         process_noise_covariance: FloatMatrixLike,
         observation_noise_covariance: FloatMatrixLike,
         outlier_std_threshold: float,
+        min_growth_rate: float = -1.0,
+        max_growth_rate: float = 3.0,
     ) -> None: ...
     def update(
         self, obs: FloatVectorLike, dt: float, recent_dilution: bool = False

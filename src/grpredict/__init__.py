@@ -196,6 +196,8 @@ def build_filter_from_observation_summary(
     summary: dict[str, object],
     *,
     outlier_std_threshold: float = 5.0,
+    min_growth_rate: float = -1.0,
+    max_growth_rate: float = 3.0,
 ) -> "CultureGrowthEKF":
     return CultureGrowthEKF(
         initial_state=summary["initial_state"],
@@ -203,6 +205,8 @@ def build_filter_from_observation_summary(
         process_noise_covariance=summary["process_noise_covariance"],
         observation_noise_covariance=summary["observation_noise_covariance"],
         outlier_std_threshold=outlier_std_threshold,
+        min_growth_rate=min_growth_rate,
+        max_growth_rate=max_growth_rate,
     )
 
 
@@ -227,6 +231,8 @@ class CultureGrowthEKF:
         process_noise_covariance: FloatMatrixLike,
         observation_noise_covariance: FloatMatrixLike,
         outlier_std_threshold: float,
+        min_growth_rate: float = -1.0,
+        max_growth_rate: float = 3.0,
     ) -> None:
         import numpy as np
 
@@ -254,15 +260,19 @@ class CultureGrowthEKF:
             raise ValueError("initial_covariance must be positive definite")
         if not _is_positive_definite(observation_noise_covariance):
             raise ValueError("observation_noise_covariance must be positive definite")
+        if min_growth_rate > max_growth_rate:
+            raise ValueError("min_growth_rate must be less than or equal to max_growth_rate")
 
         self.process_noise_covariance = process_noise_covariance
         self.observation_noise_covariance = observation_noise_covariance
         self.state_ = initial_state
+        self.min_growth_rate = float(min_growth_rate)
+        self.max_growth_rate = float(max_growth_rate)
+        self.state_[1] = self._clip_growth_rate(float(self.state_[1]))
         self.covariance_ = initial_covariance
         self.n_sensors = observation_noise_covariance.shape[0]
         self.n_states = initial_state.shape[0]
         self.outlier_std_threshold = outlier_std_threshold
-        self._sigma2_gr_baseline = self.process_noise_covariance[1, 1]
         self._minimum_state_value = 1e-9
         self._log_state_ = np.array(
             [self._safe_log(self.state_[0]), float(self.state_[1]), 0.0], dtype=float
@@ -278,6 +288,9 @@ class CultureGrowthEKF:
         self._log_observation_noise_variance = self._base_log_observation_noise_variance
         self._last_public_state_ = self.state_.copy()
         self._last_public_covariance_ = self.covariance_.copy()
+
+    def _clip_growth_rate(self, growth_rate: float) -> float:
+        return min(max(float(growth_rate), self.min_growth_rate), self.max_growth_rate)
 
     def _safe_log(self, value: float) -> float:
         return log(max(float(value), self._minimum_state_value))
@@ -323,6 +336,7 @@ class CultureGrowthEKF:
         if (not np.allclose(self.state_, self._last_public_state_)) or (
             not np.allclose(self.covariance_, self._last_public_covariance_)
         ):
+            self.state_[1] = self._clip_growth_rate(float(self.state_[1]))
             self._log_state_ = np.array(
                 [self._safe_log(self.state_[0]), float(self.state_[1]), 0.0], dtype=float
             )
@@ -459,6 +473,7 @@ class CultureGrowthEKF:
         self._log_covariance_[0, 0] = max(float(self._log_covariance_[0, 0]), 1e-12)
         self._log_covariance_[1, 1] = max(float(self._log_covariance_[1, 1]), 1e-12)
         self._log_covariance_[2, 2] = max(float(self._log_covariance_[2, 2]), 1e-12)
+        self._log_state_[1] = self._clip_growth_rate(float(self._log_state_[1]))
         self._project_hidden_state_to_public_state()
 
         if np.isnan(self.state_).any():
@@ -471,16 +486,6 @@ class CultureGrowthEKF:
                 0.98 * self._log_observation_noise_variance + 0.02 * innovation_squared,
             )
             self._update_public_observation_noise_covariance_from_log_variance()
-
-        nis = (innovation * innovation) / max(residual_covariance, 1e-12)
-        if nis > 9.0:
-            self.process_noise_covariance[1, 1] *= 2
-        else:
-            factor = 0.95
-            baseline = self._sigma2_gr_baseline
-            self.process_noise_covariance[1, 1] = (
-                1 - factor
-            ) * baseline + factor * self.process_noise_covariance[1, 1]
 
         self._last_public_state_ = self.state_.copy()
         self._last_public_covariance_ = self.covariance_.copy()
