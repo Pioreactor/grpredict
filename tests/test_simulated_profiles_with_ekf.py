@@ -14,9 +14,11 @@ from tests.simulation_utils import simulate_profiled_od_observations
 
 def make_single_sensor_ekf(profile_name: str) -> CultureGrowthEKF:
     parameters = NOISE_PROFILE_PARAMETERS[profile_name]
-    initial_state = np.array([1.0, 0.0], dtype=float)
-    initial_covariance = np.diag([0.10**2, 0.15**2])
-    process_noise_covariance = np.diag([1e-5, 1e-6 * (1.0 + 0.5 * parameters["rho"])])
+    initial_state = np.array([0.0, 0.0, 0.0], dtype=float)
+    initial_covariance = np.diag([0.10**2, 0.15**2, 0.15**2])
+    process_noise_covariance = np.diag(
+        [1e-8, 6e-8 * (1.0 + 0.5 * parameters["rho"]), 6e-6 * (1.0 + 0.5 * parameters["rho"])]
+    )
     observation_noise_covariance = np.array([[0.003**2]], dtype=float)
     return CultureGrowthEKF(
         initial_state=initial_state,
@@ -60,7 +62,7 @@ def run_ekf_over_observations_with_dilution_flags(
             dt_hours,
             recent_dilution=bool(recent_dilution),
         )
-        estimated_od.append(float(state[0]))
+        estimated_od.append(float(np.exp(state[0])))
         estimated_rates.append(float(state[1]))
 
     return np.asarray(estimated_od, dtype=float), np.asarray(estimated_rates, dtype=float)

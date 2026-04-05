@@ -32,7 +32,7 @@ def run_filter_over_initialized_observations(
             float(summary["normalization_factor"]),
         )
         state, _ = ekf.update([normalized_observation], dt_hours)
-        estimated_signal.append(float(state[0]))
+        estimated_signal.append(float(np.exp(state[0])))
         estimated_growth_rate.append(float(state[1]))
 
     return (

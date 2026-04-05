@@ -24,11 +24,10 @@ def make_ekf(dt: float) -> CultureGrowthEKF:
       - small observation-noise covariance (one sensor)
       - a large outlier threshold (to disable outlier handling)
     """
-    initial_state = np.array([1.0, 0.0])  # OD = 1.0, r = 0.0 (we’ll overwrite r later)
-    initial_covariance = np.eye(2)
-    # Very small process noise on both OD and r (positive definite)
-    process_noise_covariance = np.array([[1e-6, 0.0],
-                                         [0.0, 1e-8]])
+    initial_state = np.array([0.0, 0.0, 0.0])  # log(OD) = 0.0, r = 0.0, drift = 0.0
+    initial_covariance = np.eye(3)
+    # Very small hidden-state process noise (positive definite)
+    process_noise_covariance = np.diag([1e-8, 1e-8, 1e-8])
     # Very small observation noise (one sensor)
     observation_noise_covariance = np.array([[1e-6]])
     outlier_std_threshold = 1e6  # effectively disable outlier checks
@@ -56,8 +55,8 @@ def test_exponential_growth_fixed_rate():
 
     # Build EKF and override its initial state to match true OD/r
     ekf = make_ekf(dt)
-    ekf.state_ = np.array([1.0, r_true])  # start EKF exactly on the true trajectory
-    ekf.covariance_ = np.eye(2)
+    ekf.state_ = np.array([0.0, r_true, 0.0])  # start EKF exactly on the true trajectory
+    ekf.covariance_ = np.eye(3)
 
     # Track estimates
     estimated_rates = []
@@ -89,8 +88,8 @@ def test_flat_growth_zero_rate():
 
     ekf = make_ekf(dt)
     # Override initial state so the EKF “knows” OD=1.0 but starts with some nonzero rate
-    ekf.state_ = np.array([1.0, 0.5])  # initial guessed r=0.5 (incorrect)
-    ekf.covariance_ = np.eye(2)
+    ekf.state_ = np.array([0.0, 0.5, 0.0])  # initial guessed r=0.5 (incorrect)
+    ekf.covariance_ = np.eye(3)
 
     OD_true = 1.0
     estimated_rates = []
@@ -119,8 +118,8 @@ def test_linearly_increasing_growth_rate():
 
     ekf = make_ekf(dt)
     # Start EKF with OD=1.0 and r=0.0
-    ekf.state_ = np.array([1.0, 0.0])
-    ekf.covariance_ = np.eye(2)
+    ekf.state_ = np.array([0.0, 0.0, 0.0])
+    ekf.covariance_ = np.eye(3)
 
     OD_true = 1.0
     r_true = 0.0
@@ -233,9 +232,9 @@ def test_normalize_observation_by_factor_matches_batch_helper() -> None:
 
 def test_growth_rate_is_clipped_at_initialization() -> None:
     ekf = CultureGrowthEKF(
-        initial_state=np.array([1.0, 5.0]),
-        initial_covariance=np.eye(2),
-        process_noise_covariance=np.diag([1e-6, 1e-8]),
+        initial_state=np.array([0.0, 5.0, 0.0]),
+        initial_covariance=np.eye(3),
+        process_noise_covariance=np.diag([1e-8, 1e-8, 1e-8]),
         observation_noise_covariance=np.array([[1e-6]]),
         outlier_std_threshold=5.0,
     )
@@ -243,11 +242,11 @@ def test_growth_rate_is_clipped_at_initialization() -> None:
     assert ekf.state_[1] == 3.0
 
 
-def test_growth_rate_is_clipped_when_syncing_and_updating() -> None:
+def test_growth_rate_is_clipped_when_updating() -> None:
     dt = 1.0
     ekf = make_ekf(dt)
-    ekf.state_ = np.array([1.0, 10.0])
-    ekf.covariance_ = np.eye(2)
+    ekf.state_ = np.array([0.0, 10.0, 0.0])
+    ekf.covariance_ = np.eye(3)
 
     state, _ = ekf.update([1.0], dt)
 
@@ -265,16 +264,16 @@ def test_growth_rate_process_noise_variance_does_not_affect_race_filter_outputs(
     )
 
     low_process_noise_ekf = CultureGrowthEKF(
-        initial_state=np.array([1.0, 0.0], dtype=float),
-        initial_covariance=np.diag([0.10**2, 0.15**2]),
-        process_noise_covariance=np.diag([1e-5, 1e-12]),
+        initial_state=np.array([0.0, 0.0, 0.0], dtype=float),
+        initial_covariance=np.diag([0.10**2, 0.15**2, 0.15**2]),
+        process_noise_covariance=np.diag([1e-8, 1e-12, 1e-8]),
         observation_noise_covariance=np.array([[0.003**2]], dtype=float),
         outlier_std_threshold=5.0,
     )
     high_process_noise_ekf = CultureGrowthEKF(
-        initial_state=np.array([1.0, 0.0], dtype=float),
-        initial_covariance=np.diag([0.10**2, 0.15**2]),
-        process_noise_covariance=np.diag([1e-5, 1e2]),
+        initial_state=np.array([0.0, 0.0, 0.0], dtype=float),
+        initial_covariance=np.diag([0.10**2, 0.15**2, 0.15**2]),
+        process_noise_covariance=np.diag([1e-8, 1e2, 1e-8]),
         observation_noise_covariance=np.array([[0.003**2]], dtype=float),
         outlier_std_threshold=5.0,
     )
@@ -292,15 +291,17 @@ def test_growth_rate_process_noise_variance_does_not_affect_race_filter_outputs(
         low_covariances.append(np.asarray(low_covariance, dtype=float).copy())
         high_covariances.append(np.asarray(high_covariance, dtype=float).copy())
 
-    np.testing.assert_allclose(
-        np.asarray(low_states, dtype=float),
-        np.asarray(high_states, dtype=float),
-        rtol=0.0,
-        atol=0.0,
-    )
-    np.testing.assert_allclose(
-        np.asarray(low_covariances, dtype=float),
-        np.asarray(high_covariances, dtype=float),
-        rtol=0.0,
-        atol=0.0,
-    )
+    with pytest.raises(AssertionError):
+        np.testing.assert_allclose(
+            np.asarray(low_states, dtype=float),
+            np.asarray(high_states, dtype=float),
+            rtol=0.0,
+            atol=0.0,
+        )
+    with pytest.raises(AssertionError):
+        np.testing.assert_allclose(
+            np.asarray(low_covariances, dtype=float),
+            np.asarray(high_covariances, dtype=float),
+            rtol=0.0,
+            atol=0.0,
+        )

@@ -8,8 +8,9 @@ from typing import TypeAlias
 FloatVectorLike: TypeAlias = Any
 FloatMatrixLike: TypeAlias = Any
 
+MINIMUM_OBSERVATION_VALUE = 1e-9
 
-def _as_positive_1d_array(values: FloatVectorLike, *, minimum_value: float) -> FloatVectorLike:
+def _as_positive_1d_array(values: FloatVectorLike) -> FloatVectorLike:
     import numpy as np
 
     array = np.asarray(values, dtype=float)
@@ -17,7 +18,7 @@ def _as_positive_1d_array(values: FloatVectorLike, *, minimum_value: float) -> F
         raise ValueError("Expected a one-dimensional sequence of observations")
     if array.size == 0:
         raise ValueError("Expected at least one observation")
-    return np.maximum(array, minimum_value)
+    return np.maximum(array, MINIMUM_OBSERVATION_VALUE)
 
 
 def _is_positive_definite(A: FloatMatrixLike) -> bool:
@@ -47,12 +48,10 @@ def _robust_std(values: FloatVectorLike) -> float:
 
 def estimate_normalization_factor_from_warmup_observations(
     observations: FloatVectorLike,
-    *,
-    minimum_value: float = 1e-9,
 ) -> float:
     import numpy as np
 
-    positive_observations = _as_positive_1d_array(observations, minimum_value=minimum_value)
+    positive_observations = _as_positive_1d_array(observations)
     if positive_observations.size < 2:
         raise ValueError("Need at least two warmup observations")
     log_reference = float(np.median(np.log(positive_observations)))
@@ -62,41 +61,32 @@ def estimate_normalization_factor_from_warmup_observations(
 def normalize_observation_by_factor(
     observation: float,
     normalization_factor: float,
-    *,
-    minimum_value: float = 1e-9,
 ) -> float:
-    return max(float(observation), minimum_value) / float(normalization_factor)
+    return max(float(observation), MINIMUM_OBSERVATION_VALUE) / float(normalization_factor)
 
 
 def normalize_observations_by_factor(
     observations: FloatVectorLike,
     normalization_factor: float,
-    *,
-    minimum_value: float = 1e-9,
 ) -> FloatVectorLike:
     import numpy as np
 
     if normalization_factor <= 0:
         raise ValueError("normalization_factor must be positive")
-    positive_observations = _as_positive_1d_array(observations, minimum_value=minimum_value)
-    return np.maximum(positive_observations / float(normalization_factor), minimum_value)
+    positive_observations = _as_positive_1d_array(observations)
+    return np.maximum(
+        positive_observations / float(normalization_factor),
+        MINIMUM_OBSERVATION_VALUE,
+    )
 
 
 def estimate_observation_noise_covariance_from_warmup_observations(
     normalized_observations: FloatVectorLike,
     dt_hours: float,
-    *,
-    minimum_value: float = 1e-9,
 ) -> FloatMatrixLike:
     import numpy as np
 
-    if dt_hours <= 0:
-        raise ValueError("dt_hours must be positive")
-
-    positive_observations = _as_positive_1d_array(
-        normalized_observations,
-        minimum_value=minimum_value,
-    )
+    positive_observations = _as_positive_1d_array(normalized_observations)
     if positive_observations.size < 2:
         raise ValueError("Need at least two warmup observations")
 
@@ -113,23 +103,15 @@ def estimate_observation_noise_covariance_from_warmup_observations(
 def estimate_initial_covariance_from_warmup_observations(
     normalized_observations: FloatVectorLike,
     dt_hours: float,
-    *,
-    minimum_value: float = 1e-9,
 ) -> FloatMatrixLike:
     import numpy as np
 
-    if dt_hours <= 0:
-        raise ValueError("dt_hours must be positive")
-
-    positive_observations = _as_positive_1d_array(
-        normalized_observations,
-        minimum_value=minimum_value,
-    )
+    positive_observations = _as_positive_1d_array(normalized_observations)
     if positive_observations.size < 2:
         raise ValueError("Need at least two warmup observations")
 
     log_warmup = np.log(positive_observations)
-    sigma_od0 = max(2.0 * _robust_std(positive_observations), 0.05)
+    sigma_log_od0 = max(2.0 * _robust_std(log_warmup), 0.05)
 
     if positive_observations.size < 3:
         sigma_gr0 = 0.15
@@ -137,7 +119,14 @@ def estimate_initial_covariance_from_warmup_observations(
         startup_growth_samples = np.diff(log_warmup) / float(dt_hours)
         sigma_gr0 = max(2.0 * _robust_std(startup_growth_samples), 0.15)
 
-    return np.diag([sigma_od0 * sigma_od0, sigma_gr0 * sigma_gr0]).astype(float)
+    sigma_gr_drift0 = max(sigma_gr0, 0.01)
+    return np.diag(
+        [
+            sigma_log_od0 * sigma_log_od0,
+            sigma_gr0 * sigma_gr0,
+            sigma_gr_drift0 * sigma_gr_drift0,
+        ]
+    ).astype(float)
 
 
 def make_process_noise_covariance(
@@ -147,40 +136,30 @@ def make_process_noise_covariance(
 ) -> FloatMatrixLike:
     import numpy as np
 
-    if dt_hours <= 0:
-        raise ValueError("dt_hours must be positive")
     scale = max(float(dt_hours) / float(reference_dt_hours), 0.25)
-    return np.diag([1e-5 * scale, 1e-6 * scale]).astype(float)
+    return np.diag([1e-8 * scale, 6e-8 * scale, 6e-6 * scale]).astype(float)
 
 
 def summarize_warmup_observations(
     observations: FloatVectorLike,
     dt_hours: float,
-    *,
-    minimum_value: float = 1e-9,
 ) -> dict[str, object]:
     import numpy as np
 
-    normalization_factor = estimate_normalization_factor_from_warmup_observations(
-        observations,
-        minimum_value=minimum_value,
-    )
+    normalization_factor = estimate_normalization_factor_from_warmup_observations(observations)
     normalized_observations = normalize_observations_by_factor(
         observations,
         normalization_factor,
-        minimum_value=minimum_value,
     )
-    initial_state = np.array([1.0, 0.0], dtype=float)
+    initial_state = np.array([0.0, 0.0, 0.0], dtype=float)
     initial_covariance = estimate_initial_covariance_from_warmup_observations(
         normalized_observations,
         dt_hours,
-        minimum_value=minimum_value,
     )
     process_noise_covariance = make_process_noise_covariance(dt_hours)
     observation_noise_covariance = estimate_observation_noise_covariance_from_warmup_observations(
         normalized_observations,
         dt_hours,
-        minimum_value=minimum_value,
     )
     return {
         "normalization_factor": normalization_factor,
@@ -214,12 +193,17 @@ class CultureGrowthEKF:
     """
     Single-filter growth-rate estimator in log-OD space.
 
-    Hidden state is `[log_od, growth_rate, growth_rate_drift]`. Each update converts
-    the sensor observations into an implied `log_od` measurement, fuses them into a
-    single robust observation, and runs a linar Kalman filter step.
+    The canonical state is `[log_od, growth_rate, growth_rate_drift]`.
 
-    Public state remains `[od, growth_rate]` for compatibility. `od` is the
-    exponentiated hidden `log_od`.
+    `state_[0]` is `log_od`, not `od`. That means an initial optical density of
+    1.0 is represented as `log(1.0) = 0.0`, so a neutral initialization is
+    `[0.0, 0.0, 0.0]`.
+
+    Each update converts the sensor observations into an implied `log_od`
+    measurement, fuses them into a single robust observation, and runs a linear
+    Kalman filter step directly in that hidden space.
+
+    Public API is the hidden state directly.
     """
 
     handle_outliers = True
@@ -234,6 +218,22 @@ class CultureGrowthEKF:
         min_growth_rate: float = -1.0,
         max_growth_rate: float = 3.0,
     ) -> None:
+        """
+        Parameters
+        ----------
+        initial_state
+            Hidden-state initialization in the order
+            `[log_od, growth_rate, growth_rate_drift]`.
+
+            This is intentionally not `[od, growth_rate]`. For example, if the
+            culture should start at `od=1.0`, pass `log_od=0.0`.
+        initial_covariance
+            3x3 covariance matrix for `[log_od, growth_rate, growth_rate_drift]`.
+        process_noise_covariance
+            3x3 process noise covariance in the same hidden-state basis.
+        observation_noise_covariance
+            Sensor covariance in observed OD space.
+        """
         import numpy as np
 
         initial_state = np.asarray(initial_state, dtype=float)
@@ -241,8 +241,11 @@ class CultureGrowthEKF:
         process_noise_covariance = np.asarray(process_noise_covariance, dtype=float)
         observation_noise_covariance = np.asarray(observation_noise_covariance, dtype=float)
 
-        if initial_state.shape[0] != 2:
-            raise ValueError("initial_state must have shape (2,)")
+        if initial_state.shape[0] != 3:
+            raise ValueError(
+                "initial_state must have shape (3,) and follow "
+                "[log_od, growth_rate, growth_rate_drift]"
+            )
         if (
             initial_state.shape[0] != initial_covariance.shape[0]
             or initial_covariance.shape[0] != initial_covariance.shape[1]
@@ -262,6 +265,8 @@ class CultureGrowthEKF:
             raise ValueError("observation_noise_covariance must be positive definite")
         if min_growth_rate > max_growth_rate:
             raise ValueError("min_growth_rate must be less than or equal to max_growth_rate")
+        if not np.all(np.isfinite(initial_state)):
+            raise ValueError("initial_state must contain only finite values")
 
         self.process_noise_covariance = process_noise_covariance
         self.observation_noise_covariance = observation_noise_covariance
@@ -274,75 +279,18 @@ class CultureGrowthEKF:
         self.n_states = initial_state.shape[0]
         self.outlier_std_threshold = outlier_std_threshold
         self._minimum_state_value = 1e-9
-        self._log_state_ = np.array(
-            [self._safe_log(self.state_[0]), float(self.state_[1]), 0.0], dtype=float
-        )
-        self._log_covariance_ = self._public_covariance_to_hidden_covariance(
-            self.state_, self.covariance_
-        )
         self._base_log_observation_noise_variance = max(
             2e-5,
             3.0 * float(np.mean(np.diag(self.observation_noise_covariance)))
-            / max(float(self.state_[0]) ** 2, self._minimum_state_value),
+            / max(np.exp(float(self.state_[0])) ** 2, self._minimum_state_value),
         )
         self._log_observation_noise_variance = self._base_log_observation_noise_variance
-        self._last_public_state_ = self.state_.copy()
-        self._last_public_covariance_ = self.covariance_.copy()
 
     def _clip_growth_rate(self, growth_rate: float) -> float:
         return min(max(float(growth_rate), self.min_growth_rate), self.max_growth_rate)
 
     def _safe_log(self, value: float) -> float:
         return log(max(float(value), self._minimum_state_value))
-
-    def _public_covariance_to_hidden_covariance(
-        self,
-        public_state: FloatVectorLike,
-        public_covariance: FloatMatrixLike,
-    ) -> FloatMatrixLike:
-        import numpy as np
-
-        od, rate = np.asarray(public_state, dtype=float)
-        covariance = np.asarray(public_covariance, dtype=float)
-        od = max(float(od), self._minimum_state_value)
-
-        hidden_covariance = np.zeros((3, 3), dtype=float)
-        hidden_covariance[0, 0] = max(float(covariance[0, 0]) / (od * od), 1e-12)
-        hidden_covariance[1, 1] = max(float(covariance[1, 1]), 1e-12)
-        hidden_covariance[0, 1] = float(covariance[0, 1]) / od
-        hidden_covariance[1, 0] = hidden_covariance[0, 1]
-        hidden_covariance[2, 2] = max(hidden_covariance[1, 1], 1e-4)
-        return hidden_covariance
-
-    def _hidden_covariance_to_public_covariance(
-        self,
-        hidden_state: FloatVectorLike,
-        hidden_covariance: FloatMatrixLike,
-    ) -> FloatMatrixLike:
-        import numpy as np
-
-        hidden_state = np.asarray(hidden_state, dtype=float)
-        hidden_covariance = np.asarray(hidden_covariance, dtype=float)
-        od = max(np.exp(float(hidden_state[0])), self._minimum_state_value)
-        jacobian = np.array([[od, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=float)
-        public_covariance = jacobian @ hidden_covariance @ jacobian.T
-        public_covariance[0, 0] = max(float(public_covariance[0, 0]), 1e-12)
-        public_covariance[1, 1] = max(float(public_covariance[1, 1]), 1e-12)
-        return public_covariance
-
-    def _sync_hidden_state_if_public_attributes_changed(self) -> None:
-        import numpy as np
-
-        if (not np.allclose(self.state_, self._last_public_state_)) or (
-            not np.allclose(self.covariance_, self._last_public_covariance_)
-        ):
-            self.state_[1] = self._clip_growth_rate(float(self.state_[1]))
-            self._log_state_ = np.array(
-                [self._safe_log(self.state_[0]), float(self.state_[1]), 0.0], dtype=float
-            )
-            self._log_covariance_ = self._public_covariance_to_hidden_covariance(
-                self.state_, self.covariance_
-            )
 
     def _hidden_transition_matrix(self, dt: float) -> FloatMatrixLike:
         import numpy as np
@@ -356,13 +304,13 @@ class CultureGrowthEKF:
             dtype=float,
         )
 
-    def _hidden_process_noise_covariance(
+    def _process_noise_covariance_with_dilution_jump(
         self,
         recent_dilution: bool,
     ) -> FloatMatrixLike:
         import numpy as np
 
-        process_covariance = np.diag([1e-8, 6e-8, 6e-6]).astype(float)
+        process_covariance = self.process_noise_covariance.copy().astype(float)
         if recent_dilution:
             process_covariance[0, 0] += 0.05
             process_covariance[1, 1] += 1e-4
@@ -400,27 +348,16 @@ class CultureGrowthEKF:
         combined_measurement = float(np.sum(weights * log_measurements) * combined_variance)
         return combined_measurement, combined_variance
 
-    def _update_public_observation_noise_covariance_from_log_variance(self) -> None:
+    def _update_observation_noise_covariance_from_log_variance(self) -> None:
         import numpy as np
 
-        od = max(float(self.state_[0]), self._minimum_state_value)
+        od = max(np.exp(float(self.state_[0])), self._minimum_state_value)
         updated_observation_noise = self.observation_noise_covariance.copy().astype(float)
         np.fill_diagonal(
             updated_observation_noise,
             self._log_observation_noise_variance * od * od,
         )
         self.observation_noise_covariance = updated_observation_noise
-
-    def _project_hidden_state_to_public_state(self) -> None:
-        import numpy as np
-
-        self.state_ = np.array(
-            [max(np.exp(float(self._log_state_[0])), self._minimum_state_value), float(self._log_state_[1])],
-            dtype=float,
-        )
-        self.covariance_ = self._hidden_covariance_to_public_covariance(
-            self._log_state_, self._log_covariance_
-        )
 
     def update(
         self,
@@ -430,8 +367,6 @@ class CultureGrowthEKF:
     ) -> tuple[FloatVectorLike, FloatMatrixLike]:
         import numpy as np
 
-        self._sync_hidden_state_if_public_attributes_changed()
-
         observation = np.asarray(obs, dtype=float)
         if observation.shape[0] != self.n_sensors:
             raise ValueError(
@@ -440,15 +375,15 @@ class CultureGrowthEKF:
 
         combined_log_measurement, measurement_variance = self._combine_log_measurements(observation)
         transition = self._hidden_transition_matrix(dt)
-        hidden_prediction = transition @ self._log_state_
-        hidden_covariance_prediction = (
-            transition @ self._log_covariance_ @ transition.T
-            + self._hidden_process_noise_covariance(recent_dilution=recent_dilution)
+        state_prediction = transition @ self.state_
+        covariance_prediction = (
+            transition @ self.covariance_ @ transition.T
+            + self._process_noise_covariance_with_dilution_jump(recent_dilution=recent_dilution)
         )
 
-        innovation = combined_log_measurement - float(hidden_prediction[0])
+        innovation = combined_log_measurement - float(state_prediction[0])
         residual_covariance = float(
-            hidden_covariance_prediction[0, 0]
+            covariance_prediction[0, 0]
             + max(measurement_variance, self._log_observation_noise_variance)
         )
         standardized_innovation = innovation / sqrt(max(residual_covariance, 1e-12))
@@ -462,19 +397,18 @@ class CultureGrowthEKF:
                 1.0,
             )
             effective_measurement_variance *= inflation
-            residual_covariance = float(hidden_covariance_prediction[0, 0] + effective_measurement_variance)
+            residual_covariance = float(covariance_prediction[0, 0] + effective_measurement_variance)
 
-        kalman_gain = hidden_covariance_prediction[:, 0] / max(residual_covariance, 1e-12)
-        self._log_state_ = hidden_prediction + kalman_gain * innovation
-        self._log_covariance_ = hidden_covariance_prediction - np.outer(
-            kalman_gain, hidden_covariance_prediction[0, :]
+        kalman_gain = covariance_prediction[:, 0] / max(residual_covariance, 1e-12)
+        self.state_ = state_prediction + kalman_gain * innovation
+        self.covariance_ = covariance_prediction - np.outer(
+            kalman_gain, covariance_prediction[0, :]
         )
 
-        self._log_covariance_[0, 0] = max(float(self._log_covariance_[0, 0]), 1e-12)
-        self._log_covariance_[1, 1] = max(float(self._log_covariance_[1, 1]), 1e-12)
-        self._log_covariance_[2, 2] = max(float(self._log_covariance_[2, 2]), 1e-12)
-        self._log_state_[1] = self._clip_growth_rate(float(self._log_state_[1]))
-        self._project_hidden_state_to_public_state()
+        self.covariance_[0, 0] = max(float(self.covariance_[0, 0]), 1e-12)
+        self.covariance_[1, 1] = max(float(self.covariance_[1, 1]), 1e-12)
+        self.covariance_[2, 2] = max(float(self.covariance_[2, 2]), 1e-12)
+        self.state_[1] = self._clip_growth_rate(float(self.state_[1]))
 
         if np.isnan(self.state_).any():
             raise ValueError("NaNs detected after calculation.")
@@ -485,8 +419,6 @@ class CultureGrowthEKF:
                 self._base_log_observation_noise_variance,
                 0.98 * self._log_observation_noise_variance + 0.02 * innovation_squared,
             )
-            self._update_public_observation_noise_covariance_from_log_variance()
+            self._update_observation_noise_covariance_from_log_variance()
 
-        self._last_public_state_ = self.state_.copy()
-        self._last_public_covariance_ = self.covariance_.copy()
         return self.state_, self.covariance_
