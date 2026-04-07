@@ -214,6 +214,39 @@ def test_summarize_warmup_observations_returns_warmup_only_normalized_data() -> 
     assert pytest.approx(1.0, rel=0.02) == float(np.median(normalized_warmup))
 
 
+def test_summarize_warmup_observations_returns_multisensor_calibration() -> None:
+    dt_hours = 5.0 / 60.0 / 60.0
+    latent_signal = np.array([1.00, 1.01, 1.02, 1.03, 1.05, 1.07], dtype=float)
+    warmup_observations = np.column_stack(
+        [
+            2.4 * latent_signal,
+            7.5 * latent_signal,
+        ]
+    )
+
+    summary = summarize_warmup_observations(warmup_observations, dt_hours)
+
+    normalization_factors = np.asarray(summary["normalization_factors"], dtype=float)
+    normalized_warmup = np.asarray(summary["normalized_warmup_observations"], dtype=float)
+    observation_noise_covariance = np.asarray(summary["observation_noise_covariance"], dtype=float)
+
+    assert normalization_factors.shape == (2,)
+    assert normalized_warmup.shape == warmup_observations.shape
+    np.testing.assert_allclose(
+        np.median(normalized_warmup, axis=0),
+        np.ones(2, dtype=float),
+        rtol=0.02,
+        atol=0.02,
+    )
+    assert observation_noise_covariance.shape == (2, 2)
+    np.testing.assert_allclose(
+        observation_noise_covariance,
+        np.diag(np.diag(observation_noise_covariance)),
+        rtol=0.0,
+        atol=0.0,
+    )
+
+
 def test_normalize_observation_by_factor_matches_batch_helper() -> None:
     raw_observations = np.array([2.45, 2.48, 2.43, 2.50, 2.47], dtype=float)
     normalization_factor = 2.47

@@ -10,6 +10,7 @@ FloatMatrixLike: TypeAlias = Any
 
 MINIMUM_OBSERVATION_VALUE = 1e-9
 
+
 def _as_positive_1d_array(values: FloatVectorLike) -> FloatVectorLike:
     import numpy as np
 
@@ -19,6 +20,21 @@ def _as_positive_1d_array(values: FloatVectorLike) -> FloatVectorLike:
     if array.size == 0:
         raise ValueError("Expected at least one observation")
     return np.maximum(array, MINIMUM_OBSERVATION_VALUE)
+
+
+def _as_positive_observation_matrix(observations: FloatVectorLike) -> tuple[FloatMatrixLike, bool]:
+    import numpy as np
+
+    array = np.asarray(observations, dtype=float)
+    if array.ndim == 1:
+        if array.size == 0:
+            raise ValueError("Expected at least one observation")
+        return np.maximum(array[:, np.newaxis], MINIMUM_OBSERVATION_VALUE), True
+    if array.ndim != 2:
+        raise ValueError("Expected observations with shape (n_time,) or (n_time, n_sensors)")
+    if array.shape[0] == 0 or array.shape[1] == 0:
+        raise ValueError("Expected at least one observation for each sensor")
+    return np.maximum(array, MINIMUM_OBSERVATION_VALUE), False
 
 
 def _is_positive_definite(A: FloatMatrixLike) -> bool:
@@ -48,14 +64,17 @@ def _robust_std(values: FloatVectorLike) -> float:
 
 def estimate_normalization_factor_from_warmup_observations(
     observations: FloatVectorLike,
-) -> float:
+) -> FloatVectorLike:
     import numpy as np
 
-    positive_observations = _as_positive_1d_array(observations)
-    if positive_observations.size < 2:
+    observation_matrix, was_1d = _as_positive_observation_matrix(observations)
+    if observation_matrix.shape[0] < 2:
         raise ValueError("Need at least two warmup observations")
-    log_reference = float(np.median(np.log(positive_observations)))
-    return float(np.exp(log_reference))
+    log_reference = np.median(np.log(observation_matrix), axis=0)
+    normalization_factors = np.exp(log_reference).astype(float)
+    if was_1d:
+        return float(normalization_factors[0])
+    return normalization_factors
 
 
 def normalize_observation_by_factor(
@@ -67,17 +86,21 @@ def normalize_observation_by_factor(
 
 def normalize_observations_by_factor(
     observations: FloatVectorLike,
-    normalization_factor: float,
+    normalization_factor: FloatVectorLike,
 ) -> FloatVectorLike:
     import numpy as np
 
-    if normalization_factor <= 0:
+    positive_observations = np.asarray(observations, dtype=float)
+    normalization_factors = np.asarray(normalization_factor, dtype=float)
+    if normalization_factors.ndim > 1:
+        raise ValueError("normalization_factor must be a scalar or one-dimensional array")
+    if np.any(normalization_factors <= 0):
         raise ValueError("normalization_factor must be positive")
-    positive_observations = _as_positive_1d_array(observations)
-    return np.maximum(
-        positive_observations / float(normalization_factor),
+    normalized = np.maximum(
+        np.maximum(positive_observations, MINIMUM_OBSERVATION_VALUE) / normalization_factors,
         MINIMUM_OBSERVATION_VALUE,
     )
+    return normalized.astype(float)
 
 
 def estimate_observation_noise_covariance_from_warmup_observations(
@@ -86,18 +109,23 @@ def estimate_observation_noise_covariance_from_warmup_observations(
 ) -> FloatMatrixLike:
     import numpy as np
 
-    positive_observations = _as_positive_1d_array(normalized_observations)
-    if positive_observations.size < 2:
+    observation_matrix, _ = _as_positive_observation_matrix(normalized_observations)
+    if observation_matrix.shape[0] < 2:
         raise ValueError("Need at least two warmup observations")
 
-    time_hours = np.arange(positive_observations.size, dtype=float) * float(dt_hours)
-    log_warmup = np.log(positive_observations)
-    design = np.column_stack([np.ones(positive_observations.size, dtype=float), time_hours])
-    coefficients, _, _, _ = np.linalg.lstsq(design, log_warmup, rcond=None)
-    fitted_log_signal = design @ coefficients
-    log_residuals = log_warmup - fitted_log_signal
-    log_residual_std = max(_robust_std(log_residuals), 1e-3)
-    return np.array([[log_residual_std * log_residual_std]], dtype=float)
+    time_hours = np.arange(observation_matrix.shape[0], dtype=float) * float(dt_hours)
+    design = np.column_stack([np.ones(observation_matrix.shape[0], dtype=float), time_hours])
+
+    log_residual_variances: list[float] = []
+    for sensor_index in range(observation_matrix.shape[1]):
+        log_warmup = np.log(observation_matrix[:, sensor_index])
+        coefficients, _, _, _ = np.linalg.lstsq(design, log_warmup, rcond=None)
+        fitted_log_signal = design @ coefficients
+        log_residuals = log_warmup - fitted_log_signal
+        log_residual_std = max(_robust_std(log_residuals), 1e-3)
+        log_residual_variances.append(log_residual_std * log_residual_std)
+
+    return np.diag(log_residual_variances).astype(float)
 
 
 def estimate_initial_covariance_from_warmup_observations(
@@ -106,14 +134,15 @@ def estimate_initial_covariance_from_warmup_observations(
 ) -> FloatMatrixLike:
     import numpy as np
 
-    positive_observations = _as_positive_1d_array(normalized_observations)
-    if positive_observations.size < 2:
+    observation_matrix, _ = _as_positive_observation_matrix(normalized_observations)
+    if observation_matrix.shape[0] < 2:
         raise ValueError("Need at least two warmup observations")
 
-    log_warmup = np.log(positive_observations)
+    fused_observations = np.median(observation_matrix, axis=1)
+    log_warmup = np.log(fused_observations)
     sigma_log_od0 = max(2.0 * _robust_std(log_warmup), 0.05)
 
-    if positive_observations.size < 3:
+    if fused_observations.size < 3:
         sigma_gr0 = 0.15
     else:
         startup_growth_samples = np.diff(log_warmup) / float(dt_hours)
@@ -146,9 +175,10 @@ def summarize_warmup_observations(
 ) -> dict[str, object]:
     import numpy as np
 
-    normalization_factor = estimate_normalization_factor_from_warmup_observations(observations)
+    observation_matrix, was_1d = _as_positive_observation_matrix(observations)
+    normalization_factor = estimate_normalization_factor_from_warmup_observations(observation_matrix)
     normalized_observations = normalize_observations_by_factor(
-        observations,
+        observation_matrix,
         normalization_factor,
     )
     initial_state = np.array([0.0, 0.0, 0.0], dtype=float)
@@ -161,14 +191,20 @@ def summarize_warmup_observations(
         normalized_observations,
         dt_hours,
     )
-    return {
+    summary: dict[str, object] = {
+        "normalization_factors": np.atleast_1d(np.asarray(normalization_factor, dtype=float)),
         "normalization_factor": normalization_factor,
-        "normalized_warmup_observations": normalized_observations,
+        "normalized_warmup_observations": (
+            normalized_observations[:, 0] if was_1d else normalized_observations
+        ),
         "initial_state": initial_state,
         "initial_covariance": initial_covariance,
         "process_noise_covariance": process_noise_covariance,
         "observation_noise_covariance": observation_noise_covariance,
     }
+    if was_1d:
+        summary["normalization_factor"] = float(np.asarray(normalization_factor, dtype=float)[0])
+    return summary
 
 
 def build_filter_from_observation_summary(
@@ -195,6 +231,17 @@ class CultureGrowthEKF:
 
     The canonical state is `[log_od, growth_rate, growth_rate_drift]`.
 
+    The model assumes exponential growth in observed optical density, which is
+    linear after taking logs. In continuous time:
+
+    `d(log_od)/dt = growth_rate`
+    `d(growth_rate)/dt = growth_rate_drift`
+    `d(growth_rate_drift)/dt = 0`
+
+    The filter discretizes that kinematic model over each `dt` and treats the
+    optical-density sensor as observing `log_od` with additive noise after a
+    log transform and normalization.
+
     `state_[0]` is `log_od`, not `od`. That means an initial optical density of
     1.0 is represented as `log(1.0) = 0.0`, so a neutral initialization is
     `[0.0, 0.0, 0.0]`.
@@ -202,8 +249,6 @@ class CultureGrowthEKF:
     Each update converts the sensor observations into an implied `log_od`
     measurement, fuses them into a single robust observation, and runs a linear
     Kalman filter step directly in that hidden space.
-
-    Public API is the hidden state directly.
     """
 
     handle_outliers = True

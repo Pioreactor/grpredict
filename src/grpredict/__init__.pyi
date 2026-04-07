@@ -7,14 +7,14 @@ FloatMatrixLike: TypeAlias = Iterable[Iterable[float]]
 
 def estimate_normalization_factor_from_warmup_observations(
     observations: FloatVectorLike,
-) -> float: ...
+) -> object: ...
 def normalize_observation_by_factor(
     observation: float,
     normalization_factor: float,
 ) -> float: ...
 def normalize_observations_by_factor(
     observations: FloatVectorLike,
-    normalization_factor: float,
+    normalization_factor: object,
 ) -> object: ...
 def estimate_observation_noise_covariance_from_warmup_observations(
     normalized_observations: FloatVectorLike,

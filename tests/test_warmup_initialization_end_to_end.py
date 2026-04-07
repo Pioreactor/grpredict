@@ -172,3 +172,59 @@ def test_end_to_end_noisy_offset_au_trace_yields_finite_matrices_and_positive_gr
     assert np.all(np.isfinite(estimated_signal))
     assert np.all(np.isfinite(estimated_growth_rate))
     assert float(np.median(estimated_growth_rate[-5:])) > 0.0
+
+
+def test_end_to_end_multisensor_warmup_initialization_tracks_growth() -> None:
+    dt_hours = 5.0 / 60.0 / 60.0
+    latent_signal = np.array(
+        [
+            1.00,
+            1.00,
+            1.01,
+            1.02,
+            1.02,
+            1.03,
+            1.05,
+            1.08,
+            1.12,
+            1.17,
+        ],
+        dtype=float,
+    )
+    raw_observations = np.column_stack(
+        [
+            2.6 * latent_signal,
+            6.9 * latent_signal,
+        ]
+    )
+    warmup_observations = raw_observations[:5]
+
+    summary = summarize_warmup_observations(warmup_observations, dt_hours)
+    ekf = build_filter_from_observation_summary(summary)
+
+    estimated_signal: list[float] = []
+    estimated_growth_rate: list[float] = []
+
+    for raw_observation in raw_observations[1:]:
+        normalized_observation = np.asarray(
+            normalize_observations_by_factor(
+                raw_observation,
+                summary["normalization_factors"],
+            ),
+            dtype=float,
+        )
+        state, _ = ekf.update(normalized_observation, dt_hours)
+        estimated_signal.append(float(np.exp(state[0])))
+        estimated_growth_rate.append(float(state[1]))
+
+    observation_noise_covariance = np.asarray(
+        summary["observation_noise_covariance"],
+        dtype=float,
+    )
+
+    assert ekf.n_sensors == 2
+    assert observation_noise_covariance.shape == (2, 2)
+    assert np.all(np.isfinite(estimated_signal))
+    assert np.all(np.isfinite(estimated_growth_rate))
+    assert estimated_signal[-1] > estimated_signal[0]
+    assert estimated_growth_rate[-1] > 0.0
