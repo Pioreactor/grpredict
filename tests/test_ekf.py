@@ -9,7 +9,6 @@ import pytest
 from grpredict import CultureGrowthEKF
 from grpredict import build_filter_from_observation_summary
 from grpredict import estimate_normalization_factor_from_warmup_observations
-from grpredict import normalize_observation_by_factor
 from grpredict import normalize_observations_by_factor
 from grpredict import summarize_warmup_observations
 from tests.simulation_utils import plausible_growth_rate_profiles
@@ -164,7 +163,8 @@ def test_warmup_normalization_recenters_startup_window_near_one() -> None:
     )
     normalized = normalize_observations_by_factor(raw_observations, normalization_factor)
 
-    assert normalization_factor > 0.0
+    assert normalization_factor.shape == (1,)
+    assert normalization_factor[0] > 0.0
     assert pytest.approx(1.0, rel=0.02) == float(np.median(normalized[:5]))
 
 
@@ -183,11 +183,11 @@ def test_summarize_warmup_observations_handles_gain_scaled_au_data() -> None:
     )
 
     assert pytest.approx(3.0, rel=1e-3) == (
-        summary_scaled["normalization_factor"] / summary["normalization_factor"]
+        float(summary_scaled.normalization_factors[0]) / float(summary.normalization_factors[0])
     )
     np.testing.assert_allclose(
-        normalize_observations_by_factor(raw_observations, summary["normalization_factor"]),
-        normalize_observations_by_factor(scaled_observations, summary_scaled["normalization_factor"]),
+        normalize_observations_by_factor(raw_observations, summary.normalization_factors),
+        normalize_observations_by_factor(scaled_observations, summary_scaled.normalization_factors),
         rtol=1e-6,
         atol=1e-6,
     )
@@ -195,7 +195,7 @@ def test_summarize_warmup_observations_handles_gain_scaled_au_data() -> None:
     ekf = build_filter_from_observation_summary(summary)
     normalized_observations = normalize_observations_by_factor(
         raw_observations,
-        summary["normalization_factor"],
+        summary.normalization_factors,
     )
     state, covariance = ekf.update([float(normalized_observations[5])], dt_hours)
     assert np.all(np.isfinite(state))
@@ -209,9 +209,9 @@ def test_summarize_warmup_observations_returns_warmup_only_normalized_data() -> 
 
     summary = summarize_warmup_observations(warmup_observations, dt_hours)
 
-    normalized_warmup = np.asarray(summary["normalized_warmup_observations"], dtype=float)
-    assert normalized_warmup.shape == warmup_observations.shape
-    assert pytest.approx(1.0, rel=0.02) == float(np.median(normalized_warmup))
+    normalized_warmup = np.asarray(summary.normalized_warmup_observations, dtype=float)
+    assert normalized_warmup.shape == (warmup_observations.shape[0], 1)
+    assert pytest.approx(1.0, rel=0.02) == float(np.median(normalized_warmup[:, 0]))
 
 
 def test_summarize_warmup_observations_returns_multisensor_calibration() -> None:
@@ -226,9 +226,9 @@ def test_summarize_warmup_observations_returns_multisensor_calibration() -> None
 
     summary = summarize_warmup_observations(warmup_observations, dt_hours)
 
-    normalization_factors = np.asarray(summary["normalization_factors"], dtype=float)
-    normalized_warmup = np.asarray(summary["normalized_warmup_observations"], dtype=float)
-    observation_noise_covariance = np.asarray(summary["observation_noise_covariance"], dtype=float)
+    normalization_factors = np.asarray(summary.normalization_factors, dtype=float)
+    normalized_warmup = np.asarray(summary.normalized_warmup_observations, dtype=float)
+    observation_noise_covariance = np.asarray(summary.observation_noise_covariance, dtype=float)
 
     assert normalization_factors.shape == (2,)
     assert normalized_warmup.shape == warmup_observations.shape
@@ -247,14 +247,14 @@ def test_summarize_warmup_observations_returns_multisensor_calibration() -> None
     )
 
 
-def test_normalize_observation_by_factor_matches_batch_helper() -> None:
+def test_normalize_observations_by_factor_handles_scalar_and_batch_inputs_consistently() -> None:
     raw_observations = np.array([2.45, 2.48, 2.43, 2.50, 2.47], dtype=float)
-    normalization_factor = 2.47
+    normalization_factors = np.array([2.47], dtype=float)
 
-    normalized_batch = normalize_observations_by_factor(raw_observations, normalization_factor)
+    normalized_batch = normalize_observations_by_factor(raw_observations, normalization_factors)
     normalized_streaming = np.asarray(
         [
-            normalize_observation_by_factor(float(observation), normalization_factor)
+            normalize_observations_by_factor([float(observation)], normalization_factors)[0]
             for observation in raw_observations
         ],
         dtype=float,

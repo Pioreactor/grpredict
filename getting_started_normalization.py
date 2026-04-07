@@ -38,19 +38,19 @@ def main() -> None:
         dt_hours,
     )
     ekf = build_filter_from_observation_summary(summary, outlier_std_threshold=5.0)
-    normalized_warmup = np.asarray(summary["normalized_warmup_observations"], dtype=float)
-    normalization_factors = np.asarray(summary["normalization_factors"], dtype=float)
+    normalized_warmup = np.asarray(summary.normalized_warmup_observations, dtype=float)
+    normalization_factors = np.asarray(summary.normalization_factors, dtype=float)
 
     print("Warmup length:", warmup_length)
     print("Warmup observations (AU):\n", np.round(warmup_observations, 6))
     print("Normalization factors:", np.round(normalization_factors, 6))
     print(
         "Initial hidden state [log_od, growth_rate, growth_rate_drift]:",
-        np.round(summary["initial_state"], 6),
+        np.round(summary.initial_state, 6),
     )
-    print("Initial covariance:\n", np.round(summary["initial_covariance"], 6))
-    print("Process noise covariance:\n", np.round(summary["process_noise_covariance"], 6))
-    print("Observation noise covariance:\n", np.round(summary["observation_noise_covariance"], 6))
+    print("Initial covariance:\n", np.round(summary.initial_covariance, 6))
+    print("Process noise covariance:\n", np.round(summary.process_noise_covariance, 6))
+    print("Observation noise covariance:\n", np.round(summary.observation_noise_covariance, 6))
     print()
     print("Normalized warmup observations:\n", np.round(normalized_warmup, 6))
     print()

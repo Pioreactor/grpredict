@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
+from dataclasses import dataclass
 from math import log
 from math import sqrt
 from typing import Any
@@ -11,15 +12,14 @@ FloatMatrixLike: TypeAlias = Any
 MINIMUM_OBSERVATION_VALUE = 1e-9
 
 
-def _as_positive_1d_array(values: FloatVectorLike) -> FloatVectorLike:
-    import numpy as np
-
-    array = np.asarray(values, dtype=float)
-    if array.ndim != 1:
-        raise ValueError("Expected a one-dimensional sequence of observations")
-    if array.size == 0:
-        raise ValueError("Expected at least one observation")
-    return np.maximum(array, MINIMUM_OBSERVATION_VALUE)
+@dataclass
+class WarmupObservationSummary:
+    normalization_factors: FloatVectorLike
+    normalized_warmup_observations: FloatVectorLike
+    initial_state: FloatVectorLike
+    initial_covariance: FloatMatrixLike
+    process_noise_covariance: FloatMatrixLike
+    observation_noise_covariance: FloatMatrixLike
 
 
 def _as_positive_observation_matrix(observations: FloatVectorLike) -> tuple[FloatMatrixLike, bool]:
@@ -67,21 +67,11 @@ def estimate_normalization_factor_from_warmup_observations(
 ) -> FloatVectorLike:
     import numpy as np
 
-    observation_matrix, was_1d = _as_positive_observation_matrix(observations)
+    observation_matrix, _ = _as_positive_observation_matrix(observations)
     if observation_matrix.shape[0] < 2:
         raise ValueError("Need at least two warmup observations")
     log_reference = np.median(np.log(observation_matrix), axis=0)
-    normalization_factors = np.exp(log_reference).astype(float)
-    if was_1d:
-        return float(normalization_factors[0])
-    return normalization_factors
-
-
-def normalize_observation_by_factor(
-    observation: float,
-    normalization_factor: float,
-) -> float:
-    return max(float(observation), MINIMUM_OBSERVATION_VALUE) / float(normalization_factor)
+    return np.exp(log_reference).astype(float)
 
 
 def normalize_observations_by_factor(
@@ -172,14 +162,14 @@ def make_process_noise_covariance(
 def summarize_warmup_observations(
     observations: FloatVectorLike,
     dt_hours: float,
-) -> dict[str, object]:
+) -> WarmupObservationSummary:
     import numpy as np
 
-    observation_matrix, was_1d = _as_positive_observation_matrix(observations)
-    normalization_factor = estimate_normalization_factor_from_warmup_observations(observation_matrix)
+    observation_matrix, _ = _as_positive_observation_matrix(observations)
+    normalization_factors = estimate_normalization_factor_from_warmup_observations(observation_matrix)
     normalized_observations = normalize_observations_by_factor(
         observation_matrix,
-        normalization_factor,
+        normalization_factors,
     )
     initial_state = np.array([0.0, 0.0, 0.0], dtype=float)
     initial_covariance = estimate_initial_covariance_from_warmup_observations(
@@ -191,34 +181,28 @@ def summarize_warmup_observations(
         normalized_observations,
         dt_hours,
     )
-    summary: dict[str, object] = {
-        "normalization_factors": np.atleast_1d(np.asarray(normalization_factor, dtype=float)),
-        "normalization_factor": normalization_factor,
-        "normalized_warmup_observations": (
-            normalized_observations[:, 0] if was_1d else normalized_observations
-        ),
-        "initial_state": initial_state,
-        "initial_covariance": initial_covariance,
-        "process_noise_covariance": process_noise_covariance,
-        "observation_noise_covariance": observation_noise_covariance,
-    }
-    if was_1d:
-        summary["normalization_factor"] = float(np.asarray(normalization_factor, dtype=float)[0])
-    return summary
+    return WarmupObservationSummary(
+        normalization_factors=np.asarray(normalization_factors, dtype=float),
+        normalized_warmup_observations=np.asarray(normalized_observations, dtype=float),
+        initial_state=initial_state,
+        initial_covariance=initial_covariance,
+        process_noise_covariance=process_noise_covariance,
+        observation_noise_covariance=observation_noise_covariance,
+    )
 
 
 def build_filter_from_observation_summary(
-    summary: dict[str, object],
+    summary: WarmupObservationSummary,
     *,
     outlier_std_threshold: float = 5.0,
     min_growth_rate: float = -1.0,
     max_growth_rate: float = 3.0,
 ) -> "CultureGrowthEKF":
     return CultureGrowthEKF(
-        initial_state=summary["initial_state"],
-        initial_covariance=summary["initial_covariance"],
-        process_noise_covariance=summary["process_noise_covariance"],
-        observation_noise_covariance=summary["observation_noise_covariance"],
+        initial_state=summary.initial_state,
+        initial_covariance=summary.initial_covariance,
+        process_noise_covariance=summary.process_noise_covariance,
+        observation_noise_covariance=summary.observation_noise_covariance,
         outlier_std_threshold=outlier_std_threshold,
         min_growth_rate=min_growth_rate,
         max_growth_rate=max_growth_rate,

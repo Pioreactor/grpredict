@@ -1,55 +1,67 @@
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import ClassVar, TypeAlias
+
+import numpy as np
+from numpy.typing import NDArray
 
 FloatVectorLike: TypeAlias = Iterable[float]
 FloatMatrixLike: TypeAlias = Iterable[Iterable[float]]
+FloatArray: TypeAlias = NDArray[np.float64]
+
+
+@dataclass
+class WarmupObservationSummary:
+    normalization_factors: FloatArray
+    normalized_warmup_observations: FloatArray
+    initial_state: FloatArray
+    initial_covariance: FloatArray
+    process_noise_covariance: FloatArray
+    observation_noise_covariance: FloatArray
 
 
 def estimate_normalization_factor_from_warmup_observations(
     observations: FloatVectorLike,
-) -> object: ...
-def normalize_observation_by_factor(
-    observation: float,
-    normalization_factor: float,
-) -> float: ...
+) -> FloatArray: ...
 def normalize_observations_by_factor(
     observations: FloatVectorLike,
-    normalization_factor: object,
-) -> object: ...
+    normalization_factor: FloatVectorLike,
+) -> FloatArray: ...
 def estimate_observation_noise_covariance_from_warmup_observations(
     normalized_observations: FloatVectorLike,
     dt_hours: float,
-) -> object: ...
+) -> FloatArray: ...
 def estimate_initial_covariance_from_warmup_observations(
     normalized_observations: FloatVectorLike,
     dt_hours: float,
-) -> object: ...
+) -> FloatArray: ...
 def make_process_noise_covariance(
     dt_hours: float,
     *,
     reference_dt_hours: float = 5.0 / 60.0 / 60.0,
-) -> object: ...
+) -> FloatArray: ...
 def summarize_warmup_observations(
     observations: FloatVectorLike,
     dt_hours: float,
-) -> dict[str, object]: ...
+) -> WarmupObservationSummary: ...
 def build_filter_from_observation_summary(
-    summary: dict[str, object],
+    summary: WarmupObservationSummary,
     *,
     outlier_std_threshold: float = 5.0,
     min_growth_rate: float = -1.0,
     max_growth_rate: float = 3.0,
 ) -> "CultureGrowthEKF": ...
+def _is_positive_definite(A: FloatMatrixLike) -> bool: ...
 
 
 class CultureGrowthEKF:
     """State order is `[log_od, growth_rate, growth_rate_drift]`."""
 
     handle_outliers: ClassVar[bool]
-    process_noise_covariance: object
-    observation_noise_covariance: object
-    state_: object
-    covariance_: object
+    process_noise_covariance: FloatArray
+    observation_noise_covariance: FloatArray
+    state_: FloatArray
+    covariance_: FloatArray
     n_sensors: int
     n_states: int
     outlier_std_threshold: float
@@ -68,6 +80,4 @@ class CultureGrowthEKF:
     ) -> None: ...
     def update(
         self, obs: FloatVectorLike, dt: float, recent_dilution: bool = False
-    ) -> tuple[object, object]: ...
-    @staticmethod
-    def _is_positive_definite(A: FloatMatrixLike) -> bool: ...
+    ) -> tuple[FloatArray, FloatArray]: ...

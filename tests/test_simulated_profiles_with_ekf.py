@@ -4,12 +4,36 @@ import math
 
 import numpy as np
 import pytest
+from typing import TypedDict
 
 from grpredict import CultureGrowthEKF
 from tests.simulation_utils import NOISE_PROFILE_PARAMETERS
 from tests.simulation_utils import plausible_growth_rate_profiles
 from tests.simulation_utils import simulate_noisy_observations_from_latent_od
 from tests.simulation_utils import simulate_profiled_od_observations
+
+
+class RegularDosingSimulation(TypedDict):
+    growth_rates: np.ndarray
+    latent_od: np.ndarray
+    observed_od: np.ndarray
+    recent_dilution_flags: np.ndarray
+    dosing_indices: np.ndarray
+    dosing_drop_fractions: np.ndarray
+
+
+class LevelShiftSimulation(TypedDict):
+    growth_rates: np.ndarray
+    latent_od: np.ndarray
+    observed_od: np.ndarray
+    level_shift_step: int
+
+
+class NoiseProfileChangeSimulation(TypedDict):
+    growth_rates: np.ndarray
+    latent_od: np.ndarray
+    observed_od: np.ndarray
+    switch_step: int
 
 
 def make_single_sensor_ekf(profile_name: str) -> CultureGrowthEKF:
@@ -79,7 +103,7 @@ def simulate_constant_growth_with_regular_dosing(
     dosing_interval_hours: float = 2.0,
     dosing_drop_fraction: float = 0.18,
     dosing_drop_fraction_noise: float = 0.015,
-) -> dict[str, np.ndarray]:
+) -> RegularDosingSimulation:
     growth_rates = plausible_growth_rate_profiles(total_hours, dt_hours)["constant_growth"]
     generator = np.random.default_rng(seed)
 
@@ -136,7 +160,7 @@ def simulate_zero_growth_with_level_shift(
     initial_od: float = 1.0,
     level_shift_after_hours: float = 3.0,
     level_shift_fraction: float = 0.10,
-) -> dict[str, np.ndarray]:
+) -> LevelShiftSimulation:
     growth_rates = plausible_growth_rate_profiles(total_hours, dt_hours)["zero_growth"]
     latent_od = np.full(growth_rates.size + 1, initial_od, dtype=float)
     level_shift_step = int(round(level_shift_after_hours / dt_hours))
@@ -164,7 +188,7 @@ def simulate_constant_growth_with_noise_profile_change(
     switch_after_hours: float = 4.0,
     low_noise_profile_name: str = "nominal_near_iid",
     high_noise_profile_name: str = "noisy_colored",
-) -> dict[str, np.ndarray]:
+) -> NoiseProfileChangeSimulation:
     growth_rates = plausible_growth_rate_profiles(total_hours, dt_hours)["constant_growth"]
     latent_od = np.empty(growth_rates.size + 1, dtype=float)
     latent_od[0] = initial_od

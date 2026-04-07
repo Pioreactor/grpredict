@@ -6,16 +6,16 @@ import pytest
 from grpredict import build_filter_from_observation_summary
 from grpredict import CultureGrowthEKF
 from grpredict import _is_positive_definite
-from grpredict import normalize_observation_by_factor
 from grpredict import normalize_observations_by_factor
 from grpredict import summarize_warmup_observations
+from grpredict import WarmupObservationSummary
 
 
 def run_filter_over_initialized_observations(
     warmup_observations: np.ndarray,
     raw_observations: np.ndarray,
     dt_hours: float,
-) -> tuple[dict[str, object], np.ndarray, np.ndarray]:
+) -> tuple[WarmupObservationSummary, np.ndarray, np.ndarray]:
     summary = summarize_warmup_observations(
         warmup_observations,
         dt_hours,
@@ -27,11 +27,11 @@ def run_filter_over_initialized_observations(
     estimated_growth_rate: list[float] = []
 
     for raw_observation in raw_observations[1:]:
-        normalized_observation = normalize_observation_by_factor(
-            float(raw_observation),
-            float(summary["normalization_factor"]),
+        normalized_observation = normalize_observations_by_factor(
+            [float(raw_observation)],
+            summary.normalization_factors,
         )
-        state, _ = ekf.update([normalized_observation], dt_hours)
+        state, _ = ekf.update(normalized_observation, dt_hours)
         estimated_signal.append(float(np.exp(state[0])))
         estimated_growth_rate.append(float(state[1]))
 
@@ -73,7 +73,7 @@ def test_end_to_end_warmup_initialization_tracks_a_simple_au_growth_trace() -> N
     )
 
     normalized_observations = np.asarray(
-        normalize_observations_by_factor(raw_observations, summary["normalization_factor"]),
+        normalize_observations_by_factor(raw_observations, summary.normalization_factors),
         dtype=float,
     )
     assert pytest.approx(1.0, rel=0.02) == float(np.median(normalized_observations[:5]))
@@ -121,8 +121,8 @@ def test_end_to_end_gain_scaled_au_trace_produces_same_growth_rate_path() -> Non
     )
 
     assert pytest.approx(3.7, rel=1e-3) == (
-        float(scaled_summary["normalization_factor"])
-        / float(base_summary["normalization_factor"])
+        float(scaled_summary.normalization_factors[0])
+        / float(base_summary.normalization_factors[0])
     )
     np.testing.assert_allclose(base_signal, scaled_signal, rtol=1e-6, atol=1e-6)
     np.testing.assert_allclose(base_growth_rate, scaled_growth_rate, rtol=1e-6, atol=1e-6)
@@ -159,10 +159,10 @@ def test_end_to_end_noisy_offset_au_trace_yields_finite_matrices_and_positive_gr
         dt_hours,
     )
 
-    initial_covariance = np.asarray(summary["initial_covariance"], dtype=float)
-    process_noise_covariance = np.asarray(summary["process_noise_covariance"], dtype=float)
+    initial_covariance = np.asarray(summary.initial_covariance, dtype=float)
+    process_noise_covariance = np.asarray(summary.process_noise_covariance, dtype=float)
     observation_noise_covariance = np.asarray(
-        summary["observation_noise_covariance"],
+        summary.observation_noise_covariance,
         dtype=float,
     )
 
@@ -209,7 +209,7 @@ def test_end_to_end_multisensor_warmup_initialization_tracks_growth() -> None:
         normalized_observation = np.asarray(
             normalize_observations_by_factor(
                 raw_observation,
-                summary["normalization_factors"],
+                summary.normalization_factors,
             ),
             dtype=float,
         )
@@ -218,7 +218,7 @@ def test_end_to_end_multisensor_warmup_initialization_tracks_growth() -> None:
         estimated_growth_rate.append(float(state[1]))
 
     observation_noise_covariance = np.asarray(
-        summary["observation_noise_covariance"],
+        summary.observation_noise_covariance,
         dtype=float,
     )
 
