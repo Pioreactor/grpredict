@@ -55,10 +55,10 @@ def build_panel_data(profile_name: str, total_hours: float, noise_family: str) -
     )
     ekf = make_single_sensor_ekf(noise_family)
     estimated_od = np.empty_like(simulated["observed_od"])
-    estimated_od[0] = float(ekf.state_[0])
+    estimated_od[0] = float(np.exp(ekf.state_[0]))
     for index, observation in enumerate(simulated["observed_od"][1:], start=1):
         state, _ = ekf.update([float(observation)], DT_HOURS)
-        estimated_od[index] = float(state[0])
+        estimated_od[index] = float(np.exp(state[0]))
     return {
         "time_hours": simulated["time_hours"],
         "rate_time_hours": simulated["time_hours"][1:],
@@ -79,7 +79,7 @@ def collect_panels() -> dict[tuple[int, int], dict[str, np.ndarray]]:
 
 
 def render_growth_rate_grid(panels: dict[tuple[int, int], dict[str, np.ndarray]]) -> None:
-    figure, axes = plt.subplots(3, 3, figsize=(16, 10), sharex=False, sharey=True, constrained_layout=True)
+    figure, axes = plt.subplots(3, 3, figsize=(16, 10), sharex=False, sharey=True, constrained_layout=False)
     max_abs_rate = 0.0
     for panel in panels.values():
         panel_max = float(
@@ -131,18 +131,27 @@ def render_growth_rate_grid(panels: dict[tuple[int, int], dict[str, np.ndarray]]
             )
 
     handles, labels = axes[0, 0].get_legend_handles_labels()
-    figure.legend(handles, labels, loc="upper center", ncol=2, frameon=False)
+    figure.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.945),
+        ncol=2,
+        frameon=False,
+    )
     figure.suptitle(
         "Simulated Growth Rate vs EKF Estimate Across Profiles and Noise Families\n"
         f"dt={DT_HOURS * 3600:.0f}s, seed={SEED}",
         fontsize=14,
+        y=0.972,
     )
+    figure.tight_layout(rect=(0.0, 0.0, 1.0, 0.935))
     figure.savefig(GROWTH_RATE_OUTPUT_PATH, dpi=180)
     plt.close(figure)
 
 
 def render_observed_od_grid(panels: dict[tuple[int, int], dict[str, np.ndarray]]) -> None:
-    figure, axes = plt.subplots(3, 3, figsize=(16, 10), sharex=False, sharey=False, constrained_layout=True)
+    figure, axes = plt.subplots(3, 3, figsize=(16, 10), sharex=False, sharey=False, constrained_layout=False)
     for row_index, (_, _, profile_label) in enumerate(PROFILE_LAYOUT):
         for col_index, (_, noise_label) in enumerate(NOISE_FAMILIES):
             axis = axes[row_index, col_index]
@@ -167,16 +176,18 @@ def render_observed_od_grid(panels: dict[tuple[int, int], dict[str, np.ndarray]]
                 panel["time_hours"],
                 panel["estimated_od"],
                 color="#d62728",
-                linewidth=1.5,
-                alpha=0.9,
+                linewidth=2.6,
+                alpha=1.0,
                 label="KF OD",
+                zorder=4,
             )
             axis.scatter(
                 panel["time_hours"],
                 panel["observed_od"],
                 color="#2ca02c",
                 s=4,
-                alpha=0.35,
+                alpha=0.22,
+                zorder=2,
             )
             axis.grid(alpha=0.18)
 
@@ -200,12 +211,21 @@ def render_observed_od_grid(panels: dict[tuple[int, int], dict[str, np.ndarray]]
             )
 
     handles, labels = axes[0, 0].get_legend_handles_labels()
-    figure.legend(handles, labels, loc="upper center", ncol=3, frameon=False)
+    figure.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.945),
+        ncol=3,
+        frameon=False,
+    )
     figure.suptitle(
         "Simulated Latent OD, Observed OD, and KF OD Across Profiles and Noise Families\n"
         f"dt={DT_HOURS * 3600:.0f}s, seed={SEED}",
         fontsize=14,
+        y=0.972,
     )
+    figure.tight_layout(rect=(0.0, 0.0, 1.0, 0.935))
     figure.savefig(OD_OUTPUT_PATH, dpi=180)
     plt.close(figure)
 
