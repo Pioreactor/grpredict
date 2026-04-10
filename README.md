@@ -60,5 +60,9 @@ Luckily, we do the work for you. We will compute $gr(t)$ using a statistical alg
 
 
 
+----
+
+![gr](https://github.com/Pioreactor/grpredict/blob/main/ekf_profile_noise_grid.png?raw=true)
+![od](https://github.com/Pioreactor/grpredict/blob/main/ekf_profile_noise_od_grid.png?raw=true)
 
 
